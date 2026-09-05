@@ -156,6 +156,34 @@ r_gpe() {
     printf '  (run linx-gpe-scan to measure rates and get the fix)\n'
 }
 
+r_pressure() {
+    section "Pressure stall information"
+    # PSI measures the time tasks were actually stalled waiting for a resource.
+    # It answers "is this machine struggling?" directly, where a percentage-used
+    # figure only lets you guess: 70% memory used with no stalls is a machine
+    # using its RAM properly, while 70% with sustained memory pressure is one
+    # about to thrash.
+    if [ ! -r /proc/pressure/cpu ]; then
+        printf '  not available (kernel built without PSI, or psi=0)\n'
+        return
+    fi
+    printf '  %-8s %8s %8s %8s\n' "" "avg10" "avg60" "avg300"
+    for r in cpu memory io; do
+        [ -r "/proc/pressure/$r" ] || continue
+        line=$(awk '/^some/{print $2, $3, $4}' "/proc/pressure/$r" \
+               | sed 's/avg10=//;s/avg60=//;s/avg300=//')
+        # shellcheck disable=SC2086
+        set -- $line
+        printf '  %-8s %8s %8s %8s\n' "$r" "${1:-?}" "${2:-?}" "${3:-?}"
+    done
+    printf '\n  Reading these: the figures are the percentage of time something was\n'
+    printf '  stalled waiting for that resource, over the last 10, 60 and 300s.\n'
+    printf '  Under ~5%% on avg60 is healthy. Sustained memory pressure above ~20%%\n'
+    printf '  means real thrashing, and is worth acting on; a high cpu figure with\n'
+    printf '  low memory and io means you are simply CPU-bound, which on a 1.33 GHz\n'
+    printf '  Atom is often the honest answer rather than a fault.\n'
+}
+
 r_services() {
     section "Heaviest resident processes"
     ps -eo rss,comm --sort=-rss 2>/dev/null | head -12 \
@@ -166,7 +194,7 @@ r_services() {
 
 usage() {
     echo "usage: linx-report [section...]" >&2
-    echo "  sections: system cpu memory storage display audio input network power gpe services" >&2
+    echo "  sections: system cpu memory storage display audio input network power gpe pressure services" >&2
     echo "  groups:   all (default), hw (display audio input network power)" >&2
     exit 1
 }
@@ -183,12 +211,13 @@ run_section() {
         network)  r_network ;;
         power)    r_power ;;
         gpe)      r_gpe ;;
+        pressure) r_pressure ;;
         services) r_services ;;
         # Everything that depends on the actual machine, for reporting a problem.
         hw)       r_display; r_audio; r_input; r_network; r_power ;;
         all)
             r_system; r_cpu; r_memory; r_storage; r_display
-            r_audio; r_input; r_network; r_power; r_gpe; r_services
+            r_audio; r_input; r_network; r_power; r_gpe; r_pressure; r_services
             printf '\nTip: linx-report > report.txt 2>&1  to capture all of this.\n'
             ;;
         *) echo "unknown section: $1" >&2; usage ;;
