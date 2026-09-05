@@ -81,6 +81,56 @@ thread is pinned near 100% CPU and nothing else you tune will matter as much.
 
 ---
 
+## Installing to the microSD card instead of the eMMC
+
+Reasonable reasons to want this: it leaves the existing Windows install
+untouched, a 64 GB card is bigger than the 29 GB eMMC, and it is completely
+reversible - pull the card out and the tablet is exactly as it was.
+
+```bash
+sudo LINX_ALLOW_SD=1 linx-install /dev/mmcblkN
+```
+
+`linx-install` refuses an SD card without `LINX_ALLOW_SD=1`, because on this
+hardware both the eMMC and the card report `removable = 0` and picking the wrong
+one destroys somebody's photos. Confirm which is which first:
+
+```bash
+linx-report storage
+cat /sys/block/mmcblk*/device/type    # MMC = internal eMMC, SD = the card
+```
+
+### Two things to check before you commit to it
+
+**Can the firmware boot from the SD slot at all?** Not all Bay Trail tablets
+expose the microSD reader as a boot device — some enumerate only USB and the
+internal eMMC. There is no way to know for a given unit except to try. The good
+news is that trying costs nothing but the card's existing contents: install to
+the card, reboot, and see whether the firmware's Boot Manager lists it. Windows
+on the eMMC is untouched either way, so a failure leaves you exactly where you
+started.
+
+**The card is almost certainly slower than the eMMC**, and this matters more
+than people expect. Desktop responsiveness is dominated by small random reads,
+not sequential throughput, and that is precisely where cheap cards are worst. A
+card with no application-performance rating can be several times slower than the
+eMMC for this workload, which will undo a good deal of what the rest of this
+image is doing.
+
+Look for an **A1** or **A2** rating on the card (a small `A1`/`A2` logo). Those
+guarantee a minimum random IOPS figure and are the only ratings that predict
+desktop behaviour. "Class 10" and "U1/U3" describe sequential speed only and
+tell you nothing useful here.
+
+### If you install to the card
+
+Everything else is identical to an eMMC install. The image's storage tuning
+already applies to any `mmcblk` device — `mq-deadline`, 128 KB readahead,
+`noatime`, `commit=60`, weekly batch TRIM — and zram matters even more when the
+backing store is slow, so keep it.
+
+Do not remove the card while the system is running. It is the root filesystem.
+
 ## Dual-booting with Windows
 
 `linx-install` does **not** do this — it is a whole-disk installer. On a 32 GB
