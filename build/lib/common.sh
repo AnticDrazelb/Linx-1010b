@@ -85,12 +85,39 @@ chroot_sh() {
 check_fs_capable() {
     local dir=$1
     local t="$dir/.fscheck.$$"
-    mkdir -p "$t"
-    # Always clean up, even on the die() paths below.
-    trap 'rm -rf "$t" 2>/dev/null || true' RETURN
+    local fail=""
+    rm -rf "$t"; mkdir -p "$t"
 
     local fstype; fstype=$(stat -f -c %T "$dir" 2>/dev/null || echo unknown)
-    local hint="
+
+    # Collect a failure reason rather than dying inline, so there is exactly one
+    # cleanup point. (A RETURN trap would be tidier but must not be used here:
+    # build.sh SOURCES its stage scripts, and a RETURN trap fires on the end of a
+    # sourced file too, long after these locals have gone out of scope.)
+    if ! mknod "$t/devnode" c 1 3 2>/dev/null; then
+        fail="Cannot create device nodes in $dir."
+    elif ! : > "$t/owned" || ! chown 12345:12345 "$t/owned" 2>/dev/null; then
+        fail="Cannot set file ownership in $dir."
+    elif [ "$(stat -c '%u:%g' "$t/owned")" != "12345:12345" ]; then
+        fail="File ownership is not preserved in $dir."
+    else
+        # A Debian rootfs contains files whose names differ only in case.
+        : > "$t/CaseTest"
+        if : > "$t/casetest" 2>/dev/null \
+           && [ "$(find "$t" -maxdepth 1 -iname 'casetest' | wc -l)" -lt 2 ]; then
+            fail="The filesystem at $dir is case-insensitive."
+        fi
+    fi
+
+    # Extended attributes carry file capabilities (e.g. on ping) and rsync -X.
+    if [ -z "$fail" ] && command -v setfattr >/dev/null 2>&1; then
+        setfattr -n user.linxtest -v 1 "$t/owned" 2>/dev/null \
+            || warn "Extended attributes unsupported in $dir; file capabilities will be lost."
+    fi
+
+    rm -rf "$t"
+
+    [ -z "$fail" ] || die "$fail
 The build directory is on a '$fstype' filesystem.
 If you are on Windows/WSL2, you are almost certainly building under /mnt/c.
 Move the checkout onto the Linux filesystem instead, e.g:
@@ -98,28 +125,6 @@ Move the checkout onto the Linux filesystem instead, e.g:
     cp -r /mnt/c/Users/you/Linx-1010b ~/Linx-1010b && cd ~/Linx-1010b
 
 See docs/build-on-windows.md."
-
-    # 1. Device nodes: debootstrap creates /dev/console, /dev/null and friends.
-    mknod "$t/devnode" c 1 3 2>/dev/null || die "Cannot create device nodes in $dir.$hint"
-
-    # 2. Ownership: the rootfs contains files owned by many different uids.
-    : > "$t/owned"
-    chown 12345:12345 "$t/owned" 2>/dev/null || die "Cannot set file ownership in $dir.$hint"
-    [ "$(stat -c '%u:%g' "$t/owned")" = "12345:12345" ] \
-        || die "File ownership is not preserved in $dir.$hint"
-
-    # 3. Case sensitivity: a Debian rootfs contains files differing only in case.
-    : > "$t/CaseTest"
-    if : > "$t/casetest" 2>/dev/null && [ "$(find "$t" -maxdepth 1 -iname 'casetest' | wc -l)" -lt 2 ]; then
-        die "The filesystem at $dir is case-insensitive.$hint"
-    fi
-
-    # 4. Extended attributes: rsync -X in the installer, and capabilities on
-    #    binaries such as ping, are stored as xattrs.
-    if command -v setfattr >/dev/null 2>&1; then
-        setfattr -n user.linxtest -v 1 "$t/owned" 2>/dev/null \
-            || warn "Extended attributes are not supported in $dir; file capabilities (e.g. on ping) will be lost."
-    fi
 }
 
 # Read a package list file, stripping comments and blank lines.

@@ -20,6 +20,12 @@ nano
 bash-completion
 file
 psmisc
+
+# initramfs-tools compresses the initramfs with zstd by default on Debian 13,
+# and silently falls back to gzip if the binary is absent. zstd decompresses
+# faster than gzip and produces a smaller image - both of which matter on a
+# 1.33 GHz Atom reading from a slow eMMC at every boot.
+zstd
 procps
 iproute2
 iputils-ping

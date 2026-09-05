@@ -2,7 +2,10 @@
 # Stage 50: strip the rootfs.
 log "Stripping rootfs"
 
-before=$(du -sm "$ROOTFS" | cut -f1)
+# -x keeps du on the rootfs filesystem; without it this walks the
+# bind-mounted /proc, /sys, /dev and /run, which is slow, floods the log
+# with errors about vanishing pids, and measures the wrong thing.
+before=$(du -smx "$ROOTFS" | cut -f1)
 
 mount_pseudo "$ROOTFS"
 in_chroot "$ROOTFS" apt-get -y autoremove --purge
@@ -62,5 +65,5 @@ rm -f "$ROOTFS/usr/sbin/policy-rc.d"
 : > "$ROOTFS/etc/machine-id"
 rm -f "$ROOTFS/var/lib/dbus/machine-id"
 
-after=$(du -sm "$ROOTFS" | cut -f1)
+after=$(du -smx "$ROOTFS" | cut -f1)
 ok "Rootfs stripped: ${before}MB -> ${after}MB (saved $((before-after))MB)"

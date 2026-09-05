@@ -24,6 +24,21 @@ This is required to build the 32-bit EFI bootloader the Linx 1010B needs."
     warn "/usr/lib/grub/x86_64-efi missing (apt install grub-efi-amd64-bin).
 The ISO will boot the tablet but not ordinary 64-bit UEFI PCs, which makes testing harder."
 
+# Without the Debian archive keyring on the HOST, debootstrap cannot verify the
+# Release signature and silently bootstraps from unverified packages - it prints
+# one warning and carries on. An OS image is exactly the wrong thing to build out
+# of unauthenticated packages, so make this a hard failure.
+if [ ! -f /usr/share/keyrings/debian-archive-keyring.gpg ] && [ "${LINX_ALLOW_UNVERIFIED:-0}" != "1" ]; then
+    die "/usr/share/keyrings/debian-archive-keyring.gpg is missing.
+debootstrap would fall back to an UNVERIFIED bootstrap. Install it with:
+
+    apt install debian-archive-keyring
+
+(Set LINX_ALLOW_UNVERIFIED=1 to override, which you should not do for an image
+you intend to actually run.)"
+fi
+ok "Debian archive keyring present; bootstrap will be signature-verified"
+
 # Verify the build filesystem before anything else writes to it - see
 # docs/build-on-windows.md for why this matters on WSL2.
 log "Checking that $(dirname "$WORKDIR") can hold a Linux rootfs"
