@@ -29,6 +29,37 @@ GRUB_MODULES="
     ls cat help probe regexp true gzio xzio
 "
 
+# A unique marker file, used by the embedded config below to locate the medium.
+mkdir -p "$ISO/.disk"
+echo "linx1010b-gnome $(date -u +%Y%m%dT%H%M%SZ)" > "$ISO/.disk/linx1010b.id"
+
+# --- embedded early configuration -------------------------------------------
+# WITHOUT THIS, GRUB DROPS TO A grub> PROMPT ON REAL HARDWARE.
+#
+# grub-mkimage --prefix=/boot/grub sets a device-less prefix, so at startup GRUB
+# looks for ($root)/boot/grub/grub.cfg where $root is whatever device the firmware
+# says it was loaded from. That device is the FAT EFI System Partition, which
+# contains only /EFI/BOOT/*.EFI - there is no /boot/grub on it, so the config is
+# never found and GRUB falls through to its command prompt.
+#
+# It can appear to work under emulation: some firmware reports the whole disk
+# rather than the ESP, and GRUB then reads the hybrid image as iso9660, where
+# /boot/grub/grub.cfg does exist. Do not rely on that - it is firmware-dependent,
+# and the Linx 1010B's firmware reports the partition.
+#
+# The fix is to embed a config that finds the medium by a marker file and sets
+# root and prefix explicitly, which is deterministic on any firmware.
+EARLY_CFG=$WORKDIR/early-grub.cfg
+# Plain sequential commands only. The embedded config is executed by GRUB's
+# built-in minimal parser BEFORE the normal module is loaded, so shell constructs
+# - if/then/fi, test, [ - do not exist yet and produce "Unknown command `if'",
+# after which the rest of the config never runs and you land at a grub> prompt.
+cat > "$EARLY_CFG" <<'EARLY'
+search --no-floppy --set=root --file /.disk/linx1010b.id
+set prefix=($root)/boot/grub
+configfile ($root)/boot/grub/grub.cfg
+EARLY
+
 build_grub() {
     local target=$1 out=$2
     [ -d "/usr/lib/grub/$target" ] || { warn "skipping $target (modules not installed)"; return 1; }
@@ -36,6 +67,7 @@ build_grub() {
         --format="$target" \
         --directory="/usr/lib/grub/$target" \
         --prefix="/boot/grub" \
+        --config="$EARLY_CFG" \
         --output="$out" \
         $GRUB_MODULES
     ok "  $(basename "$out"): $(stat -c%s "$out") bytes ($target)"
@@ -116,4 +148,24 @@ mmd  -i "$EFI_IMG" ::/EFI ::/EFI/BOOT
 for f in "$ISO"/EFI/BOOT/*.EFI; do
     mcopy -i "$EFI_IMG" "$f" "::/EFI/BOOT/$(basename "$f")"
 done
+
+# Second line of defence. If the embedded config's search somehow fails, GRUB
+# falls back to ($root)/boot/grub/grub.cfg with $root = this ESP. Give it a real
+# config there that jumps to the medium, rather than a command prompt.
+mmd -i "$EFI_IMG" ::/boot ::/boot/grub
+cat > "$WORKDIR/esp-grub.cfg" <<'ESPCFG'
+# Fallback config living on the EFI System Partition. The real menu is on the
+# ISO9660 filesystem; find it by its marker file and hand over.
+search --no-floppy --set=root --file /.disk/linx1010b.id
+if [ -e ($root)/boot/grub/grub.cfg ]; then
+    set prefix=($root)/boot/grub
+    configfile ($root)/boot/grub/grub.cfg
+else
+    echo "Could not find the Linx 1010B medium."
+    echo "Try:  search --no-floppy --set=root --file /live/filesystem.squashfs"
+    echo "      configfile ($root)/boot/grub/grub.cfg"
+    sleep 10
+fi
+ESPCFG
+mcopy -i "$EFI_IMG" "$WORKDIR/esp-grub.cfg" ::/boot/grub/grub.cfg
 ok "EFI images ready ($(du -h "$EFI_IMG" | cut -f1) ESP)"

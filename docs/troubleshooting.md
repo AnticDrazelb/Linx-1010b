@@ -27,16 +27,47 @@ present at power-on. Insert the stick, then power on holding Volume Up. Try the
 other USB port, and try a USB 2.0 stick — some of these firmwares are unreliable
 with USB 3.0 devices.
 
-**4. It boots to a GRUB prompt instead of the menu.** GRUB loaded but could not
-find its config. At the prompt:
+**4. It boots to a `grub>` prompt instead of the menu.** GRUB loaded - which means
+the 32-bit EFI half already works - but could not find `grub.cfg`.
+
+Recover the current boot:
 
 ```
-grub> search --set=root --file /live/filesystem.squashfs
+grub> search --no-floppy --set=root --file /boot/grub/grub.cfg
 grub> configfile /boot/grub/grub.cfg
 ```
 
-If that works, the ISO's `search` line failed — usually a mastering problem in
-stage 80.
+or boot directly:
+
+```
+grub> search --no-floppy --set=root --file /live/filesystem.squashfs
+grub> linux /live/vmlinuz boot=live components quiet loglevel=3
+grub> initrd /live/initrd.img
+grub> boot
+```
+
+**Why this happens**, because it is worth understanding: `grub-mkimage
+--prefix=/boot/grub` sets a prefix with no device, so GRUB looks for
+`($root)/boot/grub/grub.cfg` where `$root` is whatever device the firmware says
+it loaded from. On this tablet that is the FAT EFI System Partition, which holds
+only `/EFI/BOOT/*.EFI` - so the config is never found.
+
+Confusingly, the same image can boot fine elsewhere: some firmware reports the
+whole disk instead of the partition, and GRUB then reads the hybrid image as
+iso9660, where `/boot/grub/grub.cfg` does exist. So this bug hides under
+emulation and appears on real hardware.
+
+Images built after this was fixed embed a configuration into the EFI binary that
+locates the medium by a marker file (`/.disk/linx1010b.id`) and sets `root` and
+`prefix` explicitly, which does not depend on firmware behaviour. A fallback
+config is also written to the ESP itself. If you are on an older image, the
+commands above get you booted; the installed system is unaffected, because
+`grub-install` writes its own correct configuration to the eMMC.
+
+Note for anyone editing that embedded config: it runs in GRUB's minimal parser
+before `normal` is loaded, so `if`, `then`, `fi` and `[` do not exist there and
+produce `Unknown command \`if'`, after which nothing else in it runs. Plain
+sequential commands only.
 
 ## Installed system will not boot, live USB does
 
