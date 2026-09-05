@@ -87,9 +87,22 @@ done
 # User-session services, masked globally so they never start for any user.
 log "  masking unnecessary user services"
 MASK_USER=(
-    # Tracker: full-text indexing of the home directory. Sustained CPU and
-    # sustained writes to a wear-limited eMMC. The dconf settings already tell
-    # it to index nothing; masking makes sure it never even starts.
+    # The desktop search indexer: full-text indexing of the home directory,
+    # meaning sustained CPU and sustained writes to a wear-limited eMMC.
+    #
+    # NOTE THE NAMES. Debian 13 / GNOME 48 renamed the tracker3 miners to
+    # "localsearch". Masking tracker-miner-fs-3.service and friends silently
+    # does nothing - the units do not exist, systemctl mask happily creates a
+    # symlink for a unit nobody will ever start, and localsearch-3 runs anyway.
+    # This was exactly the bug: 37 MB resident and an indexer running on a
+    # machine whose whole point was not to have one.
+    localsearch-3.service
+    localsearch-control-3.service
+    localsearch-writeback-3.service
+    # The D-Bus activation names, so an on-demand start cannot revive it either.
+    tinysparql-xdg-portal-3.service
+    # Kept for older/newer bases that still use the tracker names. Harmless when
+    # the units are absent.
     tracker-miner-fs-3.service
     tracker-extract-3.service
     tracker-miner-rss-3.service

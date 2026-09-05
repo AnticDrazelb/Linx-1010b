@@ -9,10 +9,24 @@ ACTION=="add", SUBSYSTEM=="i2c", ATTR{power/control}="auto"
 ACTION=="add", SUBSYSTEM=="spi", ATTR{power/control}="auto"
 ACTION=="add", SUBSYSTEM=="mmc", ATTR{power/control}="auto"
 
-# USB autosuspend, but NOT for input devices (HID keyboards/mice/touch wake
-# slowly and drop the first keystroke) and not for the dock's hub.
-ACTION=="add", SUBSYSTEM=="usb", ATTR{bDeviceClass}!="09", ATTR{power/control}="auto"
-ACTION=="add", SUBSYSTEM=="usb", ENV{ID_INPUT}=="1", ATTR{power/control}="on"
+# USB autosuspend is deliberately NOT enabled.
+#
+# The previous rule here tried to autosuspend everything except hubs, and to
+# exclude input devices with ENV{ID_INPUT}=="1". That exclusion does not work:
+# ID_INPUT is set on devices in the "input" subsystem, not on their parent USB
+# device, so the match never fires and the keyboard dock gets autosuspended
+# along with everything else. The reported symptom is a touchpad that does not
+# work at all.
+#
+# The keyboard dock on this tablet is a single USB composite device providing
+# keyboard, mouse and several HID control interfaces. Suspending it is exactly
+# what you do not want, and the power saved is small next to a panel backlight.
+# If you want to experiment, the correct match is on the HID INTERFACE class:
+#
+#   ACTION=="add", SUBSYSTEM=="usb", ATTR{bInterfaceClass}=="03", GOTO="linx_skip_pm"
+#
+# but the safe default on a machine whose only pointing devices are USB is to
+# leave USB power management alone.
 
 # SATA/AHCI link power saving is irrelevant here (no SATA), SD/SDIO is handled
 # by the mmc rule above.

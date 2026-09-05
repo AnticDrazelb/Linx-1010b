@@ -27,15 +27,19 @@ clock-show-weekday=true
 disable-external=true
 disabled=['org.gnome.Software.desktop', 'org.gnome.Characters.desktop', 'org.gnome.Calculator.desktop']
 
-[org/freedesktop/Tracker3/Miner/Files]
+[org/freedesktop/tracker/miner/files]
 # Tracker indexes the whole home directory in the background: sustained CPU and
 # sustained writes to a slow eMMC, to power a search feature that costs more
 # than it is worth here. Index nothing, and never index removable media.
 #
-# Path is the Tracker 3 one (/org/freedesktop/Tracker3/Miner/Files/), not the
-# Tracker 2 path - Debian 13 ships Tracker 3 and the old path is silently ignored.
-# With --no-install-recommends, tracker may not be pulled in at all; these keys
-# are belt-and-braces for the case where something depends on it.
+# The schema is org.freedesktop.Tracker3.Miner.Files but its dconf PATH is the
+# lowercase /org/freedesktop/tracker/miner/files/ - verified by reading
+# org.freedesktop.Tracker3.Miner.Files.gschema.xml in the built image. The
+# schema ID and the path are not the same string, and guessing the path from
+# the ID writes keys nothing ever reads.
+#
+# These are belt-and-braces anyway: the units are masked in stage 40, which is
+# what actually stops the indexer.
 index-recursive-directories=@as []
 index-single-directories=@as []
 index-removable-devices=false
