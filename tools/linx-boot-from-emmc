@@ -1,0 +1,186 @@
+#!/usr/bin/env bash
+#
+# linx-boot-from-emmc - make an SD-card install bootable on firmware that
+# cannot boot from the SD slot.
+#
+# The Linx 1010B's firmware does not enumerate the microSD reader as a boot
+# device: after installing to the card, its Boot Manager still lists only
+# "Windows Boot Manager" and "Internal EFI Shell". No firmware setting changes
+# that, and GRUB cannot help because it uses the same UEFI block devices.
+#
+# The kernel, however, has a real SDHCI driver and can read the card perfectly
+# well. So the fix is to split the boot chain:
+#
+#   firmware -> GRUB on the eMMC's EFI partition   (firmware can read the eMMC)
+#   GRUB     -> kernel + initrd, also on that ESP  (same filesystem as GRUB)
+#   kernel   -> root filesystem on the SD card     (kernel has the SD driver)
+#
+# Windows is left in place. This only ADDS files and a boot entry to the
+# existing EFI System Partition; nothing belonging to Windows is modified.
+#
+# Run it from the live USB, or from the SD install if you can already boot it:
+#
+#     sudo linx-boot-from-emmc
+#
+set -euo pipefail
+
+C_R=$'\033[1;31m'; C_G=$'\033[1;32m'; C_Y=$'\033[1;33m'; C_B=$'\033[1;34m'; C_0=$'\033[0m'
+log()  { printf '%s==>%s %s\n' "$C_B" "$C_0" "$*"; }
+ok()   { printf '%s -->%s %s\n' "$C_G" "$C_0" "$*"; }
+warn() { printf '%s[!]%s %s\n'  "$C_Y" "$C_0" "$*"; }
+die()  { printf '%s[x]%s %s\n'  "$C_R" "$C_0" "$*" >&2; exit 1; }
+
+[ "$(id -u)" -eq 0 ] || die "Run with sudo: sudo linx-boot-from-emmc"
+MNT=/mnt/linx-chain
+
+mmc_type() { cat "/sys/block/$1/device/type" 2>/dev/null || echo UNKNOWN; }
+
+# --- find the pieces ---------------------------------------------------------
+log "Locating the eMMC and the SD card"
+EMMC=""; SD=""
+for d in /sys/block/mmcblk*; do
+    n=$(basename "$d"); case "$n" in *boot*|*rpmb*) continue ;; esac
+    case "$(mmc_type "$n")" in
+        MMC) [ -z "$EMMC" ] && EMMC=/dev/$n ;;
+        SD)  [ -z "$SD" ]   && SD=/dev/$n ;;
+    esac
+done
+[ -n "$EMMC" ] || die "No internal eMMC found (device/type = MMC)."
+[ -n "$SD" ]   || die "No SD card found (device/type = SD). Is the card inserted?"
+ok "eMMC: $EMMC    SD card: $SD"
+
+# The eMMC's EFI System Partition - the one the firmware already boots.
+ESP=$(lsblk -lnpo NAME,PARTTYPE "$EMMC" 2>/dev/null \
+      | awk 'tolower($2)=="c12a7328-f81f-11d2-ba4b-00a0c93ec93b"{print $1; exit}')
+[ -n "$ESP" ] || ESP=$(lsblk -lnpo NAME,FSTYPE "$EMMC" | awk '$2=="vfat"{print $1; exit}')
+[ -n "$ESP" ] || die "Could not find an EFI System Partition on $EMMC."
+
+# The Linux root on the card: the ext4 partition.
+SDROOT=$(lsblk -lnpo NAME,FSTYPE "$SD" | awk '$2=="ext4"{print $1; exit}')
+[ -n "$SDROOT" ] || die "No ext4 partition on $SD - has linx-install been run on it?"
+ok "eMMC ESP: $ESP    SD root: $SDROOT"
+
+ROOT_UUID=$(blkid -s UUID -o value "$SDROOT")
+ESP_UUID=$(blkid -s UUID -o value "$ESP")
+[ -n "$ROOT_UUID" ] || die "Could not read the UUID of $SDROOT"
+
+# --- warn about what we are touching ----------------------------------------
+cat <<CONFIRM
+
+${C_Y}This will add files and a boot entry to $ESP, the EFI System
+Partition your Windows install boots from.
+
+  - Nothing belonging to Windows is modified or removed.
+  - A backup of the whole partition is written to the SD card first.
+  - If this machine uses BitLocker, adding a boot entry CAN cause Windows to
+    ask for its recovery key on the next Windows boot. Make sure you have it
+    (account.microsoft.com/devices/recoverykey) before continuing.${C_0}
+
+CONFIRM
+printf 'Type yes to continue: '; read -r reply
+[ "$reply" = "yes" ] || die "Aborted - nothing was changed."
+
+# --- mount -------------------------------------------------------------------
+log "Mounting"
+umount -R "$MNT" 2>/dev/null || true
+mkdir -p "$MNT"
+mount "$SDROOT" "$MNT"
+mkdir -p "$MNT/boot/efi"
+mount "$ESP" "$MNT/boot/efi"
+
+# --- back the ESP up onto the card ------------------------------------------
+BACKUP=$MNT/root/esp-backup-$(date +%Y%m%d-%H%M%S).img
+log "Backing up $ESP to ${BACKUP#$MNT}"
+dd if="$ESP" of="$BACKUP" bs=1M status=none
+ok "backup written ($(du -h "$BACKUP" | cut -f1))"
+
+# --- fstab: the ESP now lives on the eMMC ------------------------------------
+log "Pointing the installed system's /boot/efi at the eMMC ESP"
+sed -i "\|/boot/efi|d" "$MNT/etc/fstab"
+printf 'UUID=%s   /boot/efi  vfat  umask=0077,noatime,shortname=mixed  0 2\n' \
+    "$ESP_UUID" >> "$MNT/etc/fstab"
+
+for m in dev dev/pts proc sys run; do
+    mount --rbind "/$m" "$MNT/$m"; mount --make-rslave "$MNT/$m"
+done
+
+# --- shrink the initramfs so it fits a 100 MB ESP ---------------------------
+# A generic Debian initramfs is ~57 MB. The eMMC ESP on this tablet is 100 MB
+# and already holds Windows' boot files, so a generic one may not fit. MODULES=dep
+# builds only what this machine needs, which is safe here because it runs on the
+# machine in question.
+avail_k=$(df -k --output=avail "$MNT/boot/efi" | tail -1 | tr -dc '0-9')
+log "ESP free space: $((avail_k / 1024)) MB"
+if [ "$avail_k" -lt 122880 ]; then
+    warn "Under 120 MB free - rebuilding a machine-specific initramfs to fit"
+    sed -i 's/^MODULES=.*/MODULES=dep/' "$MNT/etc/initramfs-tools/initramfs.conf" 2>/dev/null || \
+        echo 'MODULES=dep' >> "$MNT/etc/initramfs-tools/initramfs.conf"
+    chroot "$MNT" update-initramfs -u -k all
+fi
+
+# --- copy kernel and initrd onto the ESP ------------------------------------
+log "Copying kernel and initrd to the ESP"
+KVER=$(chroot "$MNT" bash -c 'ls -1 /boot/vmlinuz-* | sort -V | tail -1' | sed 's|.*/vmlinuz-||')
+install -d "$MNT/boot/efi/EFI/linx"
+cp "$MNT/boot/vmlinuz-$KVER"    "$MNT/boot/efi/EFI/linx/vmlinuz"
+cp "$MNT/boot/initrd.img-$KVER" "$MNT/boot/efi/EFI/linx/initrd.img"
+ok "kernel $KVER ($(du -h "$MNT/boot/efi/EFI/linx/vmlinuz" | cut -f1)) + initrd ($(du -h "$MNT/boot/efi/EFI/linx/initrd.img" | cut -f1))"
+
+# --- install GRUB to the eMMC ESP -------------------------------------------
+log "Installing the 32-bit EFI bootloader to the eMMC ESP"
+chroot "$MNT" grub-install --target=i386-efi --efi-directory=/boot/efi \
+    --bootloader-id=linx --recheck --removable
+chroot "$MNT" grub-install --target=i386-efi --efi-directory=/boot/efi \
+    --bootloader-id=linx --recheck 2>/dev/null || \
+    warn "no NVRAM entry created; the removable path will still boot"
+
+# --- a config that does not rely on GRUB reaching the SD card ---------------
+# Everything GRUB touches is on this ESP. Only the kernel goes to the card, and
+# the kernel has the driver for it. rootwait covers the card taking a moment to
+# appear. No search command: this firmware's search is broken (it returns
+# "no such device" for files it can demonstrably read), so address $root
+# directly - it is already the partition GRUB was loaded from.
+log "Writing the boot menu"
+cat > "$MNT/boot/efi/boot/grub/grub.cfg" <<GRUBCFG
+set default=0
+set timeout=5
+terminal_output console
+
+set LINX_CMDLINE="root=UUID=$ROOT_UUID rootwait rw quiet loglevel=3 i915.fastboot=1 i915.enable_fbc=1 nmi_watchdog=0"
+
+menuentry "Linx 1010B GNOME (root on SD card)" {
+    linux  (\$root)/EFI/linx/vmlinuz \$LINX_CMDLINE
+    initrd (\$root)/EFI/linx/initrd.img
+}
+menuentry "Linx 1010B GNOME (safe graphics)" {
+    linux  (\$root)/EFI/linx/vmlinuz root=UUID=$ROOT_UUID rootwait rw nomodeset loglevel=3
+    initrd (\$root)/EFI/linx/initrd.img
+}
+menuentry "Linx 1010B GNOME (verbose, for diagnosing boot problems)" {
+    linux  (\$root)/EFI/linx/vmlinuz root=UUID=$ROOT_UUID rootwait rw loglevel=7 ignore_loglevel
+    initrd (\$root)/EFI/linx/initrd.img
+}
+menuentry "Windows Boot Manager" {
+    chainloader (\$root)/EFI/Microsoft/Boot/bootmgfw.efi
+}
+menuentry "UEFI firmware settings" { fwsetup }
+GRUBCFG
+ok "menu written, including an entry to chainload Windows"
+
+# --- finish ------------------------------------------------------------------
+sync
+umount -R "$MNT/dev" "$MNT/proc" "$MNT/sys" "$MNT/run" 2>/dev/null || true
+umount -R "$MNT" 2>/dev/null || true
+
+cat <<'DONE'
+
+Done. Remove the USB stick and reboot.
+
+  The tablet boots GRUB from the internal eMMC, then runs the system from the
+  SD card. Windows is still there - it is the fourth entry in the menu.
+
+  Leave the SD card in. It is the root filesystem.
+
+  If the firmware still boots straight to Windows, enter the firmware menu
+  (Volume Up + Power), choose Boot Manager, and pick the "linx" entry once.
+DONE

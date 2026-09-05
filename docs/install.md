@@ -122,6 +122,39 @@ guarantee a minimum random IOPS figure and are the only ratings that predict
 desktop behaviour. "Class 10" and "U1/U3" describe sequential speed only and
 tell you nothing useful here.
 
+### If the firmware will not boot from the card
+
+On the Linx 1010B it will not. After a successful install to the SD card, the
+firmware's Boot Manager still lists only "Windows Boot Manager" and "Internal
+EFI Shell" - the microSD reader is not enumerated as a boot device, and no
+firmware setting changes that. GRUB cannot help either: it uses the same UEFI
+block devices the firmware exposes.
+
+The kernel is a different matter. It has a real SDHCI driver and reads the card
+without difficulty. So the fix is to split the chain:
+
+```
+firmware -> GRUB on the eMMC's EFI partition   (the firmware can read the eMMC)
+GRUB     -> kernel + initrd, on that same ESP  (no other filesystem needed)
+kernel   -> root filesystem on the SD card     (the kernel has the SD driver)
+```
+
+`linx-boot-from-emmc` sets this up:
+
+```bash
+sudo linx-boot-from-emmc
+```
+
+It backs the EFI System Partition up to the card first, only ever adds files to
+it, and writes a menu that includes an entry to chainload Windows. If the ESP is
+too small for a generic 57 MB initramfs - the one on this tablet is 100 MB and
+already holds Windows' boot files - it rebuilds a machine-specific one with
+`MODULES=dep`, which is safe because it runs on the machine itself.
+
+One caveat worth taking seriously: if the machine uses BitLocker, adding a boot
+entry can make Windows ask for its recovery key on the next Windows boot. Have
+the key to hand before running it.
+
 ### If you install to the card
 
 Everything else is identical to an eMMC install. The image's storage tuning
