@@ -1,0 +1,60 @@
+# A deliberately hand-picked GNOME, NOT the gnome or gnome-core metapackages.
+#
+# gnome-core pulls ~1.4 GB and a dozen background daemons. This list is the
+# subset that produces a complete, coherent GNOME desktop and nothing else.
+# See docs/performance.md for what was dropped and why.
+
+gnome-shell
+gnome-session
+gnome-settings-daemon
+gnome-control-center
+gnome-shell-extension-prefs
+mutter
+gdm3
+
+# Portals - required for Flatpak, file choosers and screen sharing to work.
+xdg-desktop-portal
+xdg-desktop-portal-gnome
+xdg-user-dirs
+xdg-user-dirs-gtk
+
+# Wayland is the default session. Xwayland is kept for legacy X11 apps.
+xwayland
+
+# Core applications. This is where most people over-install.
+nautilus
+gnome-terminal
+gnome-text-editor
+gnome-system-monitor
+gnome-disk-utility
+gnome-calculator
+eog
+file-roller
+gnome-keyring
+seahorse
+
+# On-screen keyboard is built into GNOME Shell (Caribou is long gone); no extra
+# package needed. gnome-tweaks is genuinely useful on a device this constrained.
+gnome-tweaks
+
+# Fonts: one good UI font family and one monospace, plus emoji. Do not install
+# fonts-recommended, which is ~200 MB.
+fonts-cantarell
+fonts-dejavu-core
+fonts-noto-color-emoji
+
+# Browser. firefox-esr is the only browser in Debian main and is what most
+# people will actually use this tablet for.
+firefox-esr
+
+# Archive/codec support that users hit immediately if it is missing.
+gvfs
+gvfs-backends
+gstreamer1.0-plugins-base
+gstreamer1.0-plugins-good
+gstreamer1.0-pipewire
+
+# Printing is off by default (see the systemd mask list) but installed so it can
+# be switched on without a network round trip.
+cups
+system-config-printer

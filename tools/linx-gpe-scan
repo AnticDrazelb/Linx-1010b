@@ -1,0 +1,87 @@
+#!/usr/bin/env bash
+#
+# linx-gpe-scan - find an ACPI GPE interrupt storm and produce the fix.
+#
+# Symptom: a kworker thread sits at or near 100% of one core forever, the fan-less
+# tablet runs hot, and battery life is halved. Cause: the firmware's ACPI tables
+# raise a General Purpose Event that the handler cannot clear, so it re-fires
+# immediately, forever. This is common on Bay Trail tablets and the exact GPE
+# number varies between units, so it cannot be hardcoded in the image.
+#
+# Fix: mask that one GPE with the acpi_mask_gpe= kernel parameter.
+
+set -euo pipefail
+
+GPE_DIR=/sys/firmware/acpi/interrupts
+INTERVAL=${INTERVAL:-5}
+# A healthy GPE fires a handful of times a second at most. Anything above this
+# is not real work.
+THRESHOLD=${THRESHOLD:-100}
+
+[ -d "$GPE_DIR" ] || { echo "No $GPE_DIR - is this an ACPI system?" >&2; exit 1; }
+
+declare -A first
+for f in "$GPE_DIR"/gpe[0-9A-Fa-f]*; do
+    [ -f "$f" ] || continue
+    first[$(basename "$f")]=$(awk '{print $1}' "$f" 2>/dev/null || echo 0)
+done
+
+echo "Sampling ACPI GPE counters for ${INTERVAL}s..."
+sleep "$INTERVAL"
+
+storm_gpe=""; storm_rate=0
+printf '\n%-10s %12s %12s\n' "GPE" "DELTA" "PER SEC"
+printf -- '---------- ------------ ------------\n'
+for name in "${!first[@]}"; do
+    now=$(awk '{print $1}' "$GPE_DIR/$name" 2>/dev/null || echo 0)
+    delta=$(( now - ${first[$name]} ))
+    [ "$delta" -gt 0 ] || continue
+    rate=$(( delta / INTERVAL ))
+    printf '%-10s %12d %12d\n' "$name" "$delta" "$rate"
+    if [ "$rate" -gt "$THRESHOLD" ] && [ "$rate" -gt "$storm_rate" ]; then
+        storm_rate=$rate; storm_gpe=$name
+    fi
+done
+
+echo
+if [ -z "$storm_gpe" ]; then
+    echo "No GPE storm detected (nothing firing above ${THRESHOLD}/s)."
+    echo "If a kworker is still pinning a core, check /proc/interrupts instead."
+    exit 0
+fi
+
+# gpe6E -> 0x6E
+hexnum=${storm_gpe#gpe}
+param="acpi_mask_gpe=0x${hexnum}"
+
+cat <<MSG
+STORM DETECTED: $storm_gpe is firing ~${storm_rate} times/second.
+
+This is almost certainly what is eating a CPU core. The fix is to mask it:
+
+    $param
+
+To apply it permanently:
+
+    sudo linx-gpe-scan --apply
+
+or add it by hand to GRUB_CMDLINE_LINUX_DEFAULT in /etc/default/grub and run
+sudo update-grub.
+
+Masking a GPE disables one firmware event source. On these tablets the storming
+GPE is a spurious one and masking it has no functional cost - but if something
+stops working (usually the lid switch or a button), remove the parameter.
+MSG
+
+if [ "${1:-}" = "--apply" ]; then
+    grub_file=/etc/default/grub
+    [ "$(id -u)" -eq 0 ] || { echo "--apply needs root" >&2; exit 1; }
+    if grep -q 'acpi_mask_gpe=' "$grub_file"; then
+        echo "acpi_mask_gpe is already set in $grub_file; edit it by hand." >&2
+        exit 1
+    fi
+    cp -a "$grub_file" "$grub_file.bak.$(date +%s)"
+    sed -i "s|^\(GRUB_CMDLINE_LINUX_DEFAULT=\"[^\"]*\)\"|\1 $param\"|" "$grub_file"
+    update-grub
+    echo "Applied. Reboot to take effect."
+fi

@@ -1,0 +1,235 @@
+#!/usr/bin/env bash
+#
+# linx-tune - flip the documented performance/compatibility trade-offs on a
+# Linx 1010B install. Every option here is a real trade-off, not a magic
+# speed-up; each one prints what it costs.
+#
+#   linx-tune status
+#   linx-tune <option>
+
+set -euo pipefail
+
+GRUB_FILE=/etc/default/grub
+need_root() { [ "$(id -u)" -eq 0 ] || { echo "This needs root: sudo linx-tune $*" >&2; exit 1; }; }
+say() { printf '\033[1;32m-->\033[0m %s\n' "$*"; }
+note(){ printf '\033[1;33m    %s\033[0m\n' "$*"; }
+
+# --- kernel command line editing --------------------------------------------
+cmdline_has()    { grep -q "GRUB_CMDLINE_LINUX_DEFAULT=.*$1" "$GRUB_FILE"; }
+cmdline_add() {
+    local param=$1
+    cmdline_has "$param" && { say "$param already set"; return; }
+    cp -a "$GRUB_FILE" "$GRUB_FILE.bak.$(date +%s)"
+    sed -i "s|^\(GRUB_CMDLINE_LINUX_DEFAULT=\"[^\"]*\)\"|\1 $param\"|" "$GRUB_FILE"
+    update-grub
+    say "added '$param' - reboot to apply"
+}
+cmdline_del() {
+    local pattern=$1
+    cp -a "$GRUB_FILE" "$GRUB_FILE.bak.$(date +%s)"
+    sed -i "s|\s*${pattern}[^ \"]*||g" "$GRUB_FILE"
+    update-grub
+    say "removed '$pattern' - reboot to apply"
+}
+
+set_modprobe() {  # set_modprobe <file> <content>
+    printf '%s\n' "$2" > "/etc/modprobe.d/$1"
+    update-initramfs -u >/dev/null
+}
+
+usage() {
+cat <<'USAGE'
+linx-tune - Linx 1010B tuning switches
+
+  status              Show what is currently applied
+
+ Audio
+  audio-sst           Force the legacy Intel SST driver  [default, works]
+  audio-sof           Try the SOF driver instead         [usually silent audio]
+
+ Wi-Fi
+  wifi-powersave      Wi-Fi power management on          [default, better battery]
+  wifi-stable         Wi-Fi power management off         [fixes drops, costs battery]
+
+ Stability
+  cstate-safe         intel_idle.max_cstate=1            [fixes random freezes,
+                                                          costs a LOT of battery]
+  cstate-default      Remove the above                   [default]
+  gpe-fix             Detect and mask an ACPI GPE storm  [see linx-gpe-scan]
+
+ Power / speed
+  profile-performance CPU governor=performance           [fastest, hot, ~2h battery]
+  profile-balanced    CPU governor=schedutil             [default]
+  profile-battery     CPU governor=powersave             [slowest, longest runtime]
+
+ Desktop
+  animations-off      Disable GNOME animations           [default, much snappier]
+  animations-on       Re-enable them
+  greeter-lite        Replace GDM with LightDM           [frees ~120 MB]
+  greeter-gdm         Go back to GDM
+
+ Storage / logs
+  logs-volatile       Journal in RAM                     [default, saves eMMC writes]
+  logs-persistent     Journal on disk                    [needed to debug boot issues]
+
+ Services
+  printing-on         Enable CUPS + Avahi discovery
+  printing-off        Disable them again                 [default]
+USAGE
+}
+
+status() {
+    printf '\033[1;34m=== linx-tune status ===\033[0m\n\n'
+    printf 'kernel cmdline (configured):\n  %s\n\n' \
+        "$(grep '^GRUB_CMDLINE_LINUX_DEFAULT=' "$GRUB_FILE" | cut -d'"' -f2)"
+    printf 'kernel cmdline (running):\n  %s\n\n' "$(cat /proc/cmdline)"
+    printf 'audio dsp_driver : %s (2=SST expected)\n' \
+        "$(cat /sys/module/snd_intel_dspcfg/parameters/dsp_driver 2>/dev/null || echo n/a)"
+    printf 'cpu governor     : %s\n' \
+        "$(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor 2>/dev/null || echo n/a)"
+    printf 'wifi powersave   : %s\n' \
+        "$(nmcli -t -f 802-11-wireless.powersave con show 2>/dev/null | head -1 || echo n/a)"
+    printf 'journal storage  : %s\n' \
+        "$(systemd-analyze cat-config systemd/journald.conf 2>/dev/null | grep -i '^Storage=' | tail -1 || echo default)"
+    printf 'greeter          : %s\n' \
+        "$(basename "$(readlink -f /etc/systemd/system/display-manager.service 2>/dev/null || echo none)")"
+    printf 'animations       : %s\n' \
+        "$(gsettings get org.gnome.desktop.interface enable-animations 2>/dev/null || echo n/a)"
+    printf 'zram             : %s\n' \
+        "$(if [ -s /sys/block/zram0/disksize ] && [ "$(cat /sys/block/zram0/disksize 2>/dev/null)" != "0" ]; then numfmt --to=iec < /sys/block/zram0/disksize; else echo INACTIVE; fi)"
+}
+
+case "${1:-}" in
+status|"") [ -n "${1:-}" ] || { usage; echo; }; status ;;
+
+audio-sst)
+    need_root "$@"
+    set_modprobe linx-audio.conf 'options snd-intel-dspcfg dsp_driver=2
+blacklist pcspkr
+blacklist snd_pcsp'
+    say "forced legacy SST driver; reboot"
+    ;;
+audio-sof)
+    need_root "$@"
+    set_modprobe linx-audio.conf 'options snd-intel-dspcfg dsp_driver=3'
+    say "forced SOF driver; reboot"
+    note "On Bay Trail this usually results in a card that enumerates but plays"
+    note "nothing. Run 'linx-tune audio-sst' to go back."
+    ;;
+
+wifi-powersave)
+    need_root "$@"
+    sed -i 's/^wifi.powersave.*/wifi.powersave = 3/' /etc/NetworkManager/conf.d/10-linx-wifi.conf
+    rm -f /etc/modprobe.d/linx-wifi-stable.conf
+    systemctl restart NetworkManager
+    say "Wi-Fi power saving enabled"
+    ;;
+wifi-stable)
+    need_root "$@"
+    sed -i 's/^wifi.powersave.*/wifi.powersave = 2/' /etc/NetworkManager/conf.d/10-linx-wifi.conf
+    echo 'options r8723bs rtw_power_mgnt=0 rtw_ips_mode=0' > /etc/modprobe.d/linx-wifi-stable.conf
+    systemctl restart NetworkManager
+    say "Wi-Fi power saving disabled; reboot for the driver options"
+    note "Expect noticeably shorter battery life."
+    ;;
+
+cstate-safe)
+    need_root "$@"
+    cmdline_add "intel_idle.max_cstate=1"
+    note "This keeps the CPU out of deep idle states. It fixes the Bay Trail"
+    note "freeze erratum but can cut battery life close to half. Make sure"
+    note "intel-microcode is installed first - it fixes this on most units."
+    ;;
+cstate-default) need_root "$@"; cmdline_del "intel_idle.max_cstate=" ;;
+
+gpe-fix) need_root "$@"; exec linx-gpe-scan --apply ;;
+
+profile-performance|profile-balanced|profile-battery)
+    need_root "$@"
+    case $1 in
+        profile-performance) gov=performance ;;
+        profile-balanced)    gov=schedutil ;;
+        profile-battery)     gov=powersave ;;
+    esac
+    applied=""
+    for c in /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor; do
+        [ -w "$c" ] || continue
+        if grep -qw "$gov" "$(dirname "$c")/scaling_available_governors" 2>/dev/null; then
+            echo "$gov" > "$c"; applied=$gov
+        fi
+    done
+    if [ -z "$applied" ]; then
+        echo "Governor '$gov' is not available on this kernel/driver." >&2
+        echo "Available: $(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_available_governors 2>/dev/null)" >&2
+        exit 1
+    fi
+    # Persist across reboots.
+    cat > /etc/systemd/system/linx-cpu-governor.service <<UNIT
+[Unit]
+Description=Set CPU governor for Linx 1010B
+After=multi-user.target
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh -c 'for c in /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor; do echo $gov > "\$c" 2>/dev/null || true; done'
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+    systemctl daemon-reload
+    systemctl enable --now linx-cpu-governor.service >/dev/null 2>&1 || true
+    say "CPU governor set to $gov (persisted)"
+    [ "$gov" = performance ] && note "The Z3735F has no fan. Sustained performance mode will thermally throttle anyway."
+    ;;
+
+animations-off) gsettings set org.gnome.desktop.interface enable-animations false; say "animations off" ;;
+animations-on)  gsettings set org.gnome.desktop.interface enable-animations true;  say "animations on"
+                note "Expect visible stutter on transitions - this GPU is Gen7." ;;
+
+greeter-lite)
+    need_root "$@"
+    apt-get install -y --no-install-recommends lightdm lightdm-gtk-greeter
+    systemctl disable gdm3 >/dev/null 2>&1 || true
+    echo "/usr/sbin/lightdm" > /etc/X11/default-display-manager
+    systemctl enable lightdm
+    say "switched to LightDM; reboot"
+    note "Frees roughly 120 MB versus GDM. You lose GDM's on-screen keyboard at"
+    note "the login prompt, which matters if you use the tablet without the dock."
+    ;;
+greeter-gdm)
+    need_root "$@"
+    systemctl disable lightdm >/dev/null 2>&1 || true
+    echo "/usr/sbin/gdm3" > /etc/X11/default-display-manager
+    systemctl enable gdm3
+    say "switched to GDM; reboot"
+    ;;
+
+logs-volatile)
+    need_root "$@"
+    sed -i 's/^Storage=.*/Storage=volatile/' /etc/systemd/journald.conf.d/10-linx.conf
+    systemctl restart systemd-journald; say "journal now in RAM"
+    ;;
+logs-persistent)
+    need_root "$@"
+    sed -i 's/^Storage=.*/Storage=persistent/' /etc/systemd/journald.conf.d/10-linx.conf
+    systemctl restart systemd-journald; say "journal now on disk (journalctl -b -1 will work)"
+    note "This writes continuously to the eMMC. Switch back when you are done."
+    ;;
+
+printing-on)
+    need_root "$@"
+    systemctl unmask cups.service cups.socket avahi-daemon.service avahi-daemon.socket cups-browsed.service
+    systemctl enable --now cups.service avahi-daemon.service
+    say "printing and network discovery enabled"
+    ;;
+printing-off)
+    need_root "$@"
+    systemctl disable --now cups.service cups.socket avahi-daemon.service cups-browsed.service >/dev/null 2>&1 || true
+    systemctl mask cups.service cups.socket avahi-daemon.service avahi-daemon.socket cups-browsed.service
+    say "printing and network discovery disabled"
+    ;;
+
+-h|--help|help) usage ;;
+*) echo "Unknown option: $1" >&2; echo >&2; usage >&2; exit 1 ;;
+esac

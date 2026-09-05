@@ -1,0 +1,185 @@
+#!/usr/bin/env bash
+#
+# linx-report - dump everything needed to diagnose this tablet, or to file a
+# useful bug report. Run `linx-report` for the summary, or `linx-report audio`
+# (etc.) for one section.
+
+set -uo pipefail
+
+section() { printf '\n\033[1;34m=== %s ===\033[0m\n' "$1"; }
+have()    { command -v "$1" >/dev/null 2>&1; }
+
+r_system() {
+    section "System identity"
+    for f in sys_vendor product_name product_version board_name bios_version bios_date; do
+        [ -r "/sys/class/dmi/id/$f" ] && printf '%-16s %s\n' "$f:" "$(cat "/sys/class/dmi/id/$f")"
+    done
+    printf '%-16s %s\n' "kernel:" "$(uname -r)"
+    printf '%-16s %s\n' "cmdline:" "$(cat /proc/cmdline)"
+    # The firmware bitness is the single most important fact about this machine.
+    if [ -r /sys/firmware/efi/fw_platform_size ]; then
+        printf '%-16s %s-bit\n' "EFI firmware:" "$(cat /sys/firmware/efi/fw_platform_size)"
+    else
+        printf '%-16s %s\n' "EFI firmware:" "not booted via EFI"
+    fi
+}
+
+r_cpu() {
+    section "CPU / thermal"
+    grep -m1 'model name' /proc/cpuinfo
+    printf 'cores: %s\n' "$(nproc)"
+    if [ -d /sys/devices/system/cpu/cpu0/cpufreq ]; then
+        printf 'governor: %s\n' "$(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor 2>/dev/null)"
+        printf 'driver:   %s\n' "$(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_driver 2>/dev/null)"
+        printf 'freq:     %s kHz\n' "$(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_cur_freq 2>/dev/null)"
+    fi
+    for z in /sys/class/thermal/thermal_zone*/; do
+        [ -r "$z/temp" ] || continue
+        printf 'thermal %s: %s C (%s)\n' "$(basename "$z")" \
+            "$(( $(cat "$z/temp") / 1000 ))" "$(cat "$z/type" 2>/dev/null)"
+    done
+}
+
+r_memory() {
+    section "Memory / swap"
+    free -h
+    printf '\nzram:\n'
+    # A zero disksize means the module is loaded but no swap device was set up,
+    # which is functionally identical to zram being absent - report it as such.
+    if [ -e /sys/block/zram0/disksize ] && [ "$(cat /sys/block/zram0/disksize)" != "0" ]; then
+        printf '  disksize:   %s\n' "$(numfmt --to=iec < /sys/block/zram0/disksize 2>/dev/null)"
+        printf '  algorithm:  %s\n' "$(cat /sys/block/zram0/comp_algorithm 2>/dev/null)"
+        if [ -r /sys/block/zram0/mm_stat ]; then
+            read -r orig compr _ < /sys/block/zram0/mm_stat
+            printf '  stored:     %s -> %s\n' \
+                "$(numfmt --to=iec "$orig")" "$(numfmt --to=iec "$compr")"
+        fi
+    else
+        printf '  NOT ACTIVE - this is a problem on a 2 GB machine.\n'
+        printf '  Check: systemctl status systemd-zram-setup@zram0.service\n'
+    fi
+    printf '\nswappiness: %s\n' "$(cat /proc/sys/vm/swappiness)"
+}
+
+r_storage() {
+    section "Storage"
+    lsblk -o NAME,SIZE,FSTYPE,MOUNTPOINT,ROTA 2>/dev/null
+    for d in /sys/block/mmcblk*; do
+        [ -d "$d" ] || continue
+        printf '\n%s scheduler: %s\n' "$(basename "$d")" \
+            "$(cat "$d/queue/scheduler" 2>/dev/null)"
+        printf '%s readahead: %s KB\n' "$(basename "$d")" \
+            "$(cat "$d/queue/read_ahead_kb" 2>/dev/null)"
+    done
+    printf '\n'; df -h / /boot/efi 2>/dev/null
+}
+
+r_audio() {
+    section "Audio"
+    # Which DSP driver actually bound is the whole ballgame on Bay Trail.
+    printf 'snd-intel-dspcfg dsp_driver: %s  (0=auto 1=legacy 2=SST 3=SOF 4=AVS)\n' \
+        "$(cat /sys/module/snd_intel_dspcfg/parameters/dsp_driver 2>/dev/null || echo 'module not loaded')"
+    printf '\ncards:\n'; cat /proc/asound/cards 2>/dev/null || echo '  none'
+    printf '\ncodec / machine driver:\n'
+    lsmod 2>/dev/null | grep -E 'snd_soc|rt56|rt5[0-9]{3}|sst' || echo '  none loaded'
+    have wpctl && { printf '\npipewire sinks:\n'; wpctl status 2>/dev/null | sed -n '/Sinks:/,/^$/p'; }
+}
+
+r_input() {
+    section "Input / touchscreen"
+    # The Goodix controller enumerates over ACPI as GDIX1001; no firmware blob
+    # and no DMI quirk are needed, unlike the Silead parts in other tablets.
+    grep -E 'Name=' /proc/bus/input/devices 2>/dev/null | sed 's/^/  /'
+    printf '\naccelerometer (for auto-rotate):\n'
+    if [ -d /sys/bus/iio/devices ] && ls /sys/bus/iio/devices/iio:device* >/dev/null 2>&1; then
+        for d in /sys/bus/iio/devices/iio:device*; do
+            printf '  %s: %s\n' "$(basename "$d")" "$(cat "$d/name" 2>/dev/null)"
+        done
+    else
+        printf '  none found\n'
+    fi
+    have monitor-sensor && printf '  (test with: monitor-sensor)\n'
+}
+
+r_display() {
+    section "Display / backlight"
+    for c in /sys/class/drm/card*-*/; do
+        [ -r "$c/status" ] || continue
+        printf '  %-14s %s\n' "$(basename "$c")" "$(cat "$c/status")"
+    done
+    printf '\nbacklight:\n'
+    if ls /sys/class/backlight/* >/dev/null 2>&1; then
+        for b in /sys/class/backlight/*; do
+            printf '  %s: %s/%s\n' "$(basename "$b")" \
+                "$(cat "$b/brightness" 2>/dev/null)" "$(cat "$b/max_brightness" 2>/dev/null)"
+        done
+    else
+        # This is the pwm_lpss problem.
+        printf '  NONE - backlight control will not work.\n'
+        printf '  Check that pwm_lpss and pwm_lpss_platform are in the initramfs\n'
+        printf '  (/etc/initramfs-tools/modules), then: sudo update-initramfs -u\n'
+    fi
+    printf '\nsession type: %s\n' "${XDG_SESSION_TYPE:-unknown}"
+}
+
+r_network() {
+    section "Network"
+    ip -br link 2>/dev/null
+    printf '\nwifi driver:\n'
+    lsmod 2>/dev/null | grep -Ei 'r8723|rtw|rtl' || echo '  no realtek module loaded'
+    have nmcli && { printf '\npowersave: '; nmcli -f 802-11-wireless.powersave con show 2>/dev/null | head -1; }
+    printf '\nbluetooth:\n'
+    have hciconfig && hciconfig -a 2>/dev/null | head -5 || rfkill list bluetooth 2>/dev/null
+}
+
+r_power() {
+    section "Power"
+    for b in /sys/class/power_supply/*/; do
+        n=$(basename "$b")
+        printf '  %s: %s' "$n" "$(cat "$b/type" 2>/dev/null)"
+        [ -r "$b/capacity" ] && printf ' %s%%' "$(cat "$b/capacity")"
+        [ -r "$b/status" ]   && printf ' %s' "$(cat "$b/status")"
+        printf '\n'
+    done
+}
+
+r_gpe() {
+    section "ACPI GPE (top 5 by count)"
+    # A very large count here means a storm; run linx-gpe-scan for rates.
+    # Each file reads like "     1234   enabled", so take field 1 as the count.
+    for f in /sys/firmware/acpi/interrupts/gpe[0-9A-Fa-f]*; do
+        [ -r "$f" ] || continue
+        c=$(awk '{print $1}' "$f" 2>/dev/null)
+        case $c in ''|*[!0-9]*) continue ;; esac
+        [ "$c" -gt 0 ] && printf '%s %s\n' "$c" "$(basename "$f")"
+    done | sort -rn | head -5 | awk '{printf "  %-10s %12s\n", $2, $1}'
+    printf '  (run linx-gpe-scan to measure rates and get the fix)\n'
+}
+
+r_services() {
+    section "Heaviest resident processes"
+    ps -eo rss,comm --sort=-rss 2>/dev/null | head -12 \
+        | awk 'NR==1{print "  " $0; next} {printf "  %6.1f MB  %s\n", $1/1024, $2}'
+    section "Failed units"
+    systemctl --failed --no-legend 2>/dev/null | sed 's/^/  /' || true
+}
+
+case "${1:-all}" in
+    system)  r_system ;;
+    cpu)     r_cpu ;;
+    memory)  r_memory ;;
+    storage) r_storage ;;
+    audio)   r_audio ;;
+    input)   r_input ;;
+    display) r_display ;;
+    network) r_network ;;
+    power)   r_power ;;
+    gpe)     r_gpe ;;
+    services) r_services ;;
+    all)
+        r_system; r_cpu; r_memory; r_storage; r_display
+        r_audio; r_input; r_network; r_power; r_gpe; r_services
+        printf '\nTip: linx-report > report.txt 2>&1  to capture all of this.\n'
+        ;;
+    *) echo "usage: linx-report [system|cpu|memory|storage|audio|input|display|network|power|gpe|services|all]" >&2; exit 1 ;;
+esac

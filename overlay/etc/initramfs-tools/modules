@@ -1,0 +1,14 @@
+# Backlight control on Bay Trail is driven by the LPSS PWM block. If this module
+# is not present before i915 binds, the panel comes up with no backlight device
+# at all and brightness keys do nothing for the rest of the session. Loading it
+# from the initramfs is the reliable fix on Debian.
+pwm_lpss
+pwm_lpss_platform
+
+# Early KMS: hands the console to i915 before userspace starts, which removes a
+# mode-set flicker and lets Plymouth/GDM start at native resolution.
+i915
+
+# Root lives on eMMC.
+sdhci_acpi
+mmc_block

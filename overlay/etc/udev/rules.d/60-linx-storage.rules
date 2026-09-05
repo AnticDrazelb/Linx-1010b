@@ -1,0 +1,19 @@
+# Storage tuning for eMMC and microSD.
+#
+# eMMC is flash with a tiny internal queue and no seek penalty, but it is also
+# genuinely slow (~40-80 MB/s read, much worse for small random writes). The
+# multiqueue default on Debian is mq-deadline, which is what we want; set it
+# explicitly so a distro default change cannot regress us, and mark the device
+# non-rotational so the rest of the stack stops guessing.
+ACTION=="add|change", KERNEL=="mmcblk[0-9]", ATTR{queue/rotational}="0"
+ACTION=="add|change", KERNEL=="mmcblk[0-9]", ATTR{queue/scheduler}="mq-deadline"
+
+# Modest readahead. The default 128 KB is right for eMMC; larger values waste
+# bandwidth and page cache on a 2 GB machine, smaller values hurt sequential reads.
+ACTION=="add|change", KERNEL=="mmcblk[0-9]", ATTR{queue/read_ahead_kb}="128"
+
+# Shorter queue keeps interactive reads from queueing behind a big writeback burst.
+ACTION=="add|change", KERNEL=="mmcblk[0-9]", ATTR{queue/nr_requests}="64"
+
+# Same treatment for the microSD slot.
+ACTION=="add|change", KERNEL=="mmcblk[0-9]", ATTR{queue/iosched/write_expire}="3000"

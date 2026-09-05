@@ -1,0 +1,104 @@
+# GNOME defaults tuned for Gen7 Bay Trail graphics and 2 GB of RAM.
+# These are defaults, not locks - the user can still change any of them.
+
+[org/gnome/desktop/interface]
+# The single largest perceived-speed win on this GPU. Every GNOME Shell
+# animation is a full-screen composited effect; at 1280x800 on Gen7 that is
+# roughly 100ms of jank per transition. Turning them off makes the desktop feel
+# like a different machine.
+enable-animations=false
+
+# No fractional scaling: it forces an extra full-screen scale-blit every frame.
+text-scaling-factor=1.0
+
+# Hinting/antialiasing that is cheap to render.
+font-antialiasing='grayscale'
+font-hinting='slight'
+
+# Show the battery percentage - useful on a tablet with a vague battery icon.
+show-battery-percentage=true
+
+clock-show-weekday=true
+
+[org/gnome/desktop/search-providers]
+# The shell queries every installed search provider on each keystroke in the
+# overview. On this CPU that is the difference between a responsive and an
+# unusable Activities search.
+disable-external=true
+disabled=['org.gnome.Software.desktop', 'org.gnome.Characters.desktop', 'org.gnome.Calculator.desktop']
+
+[org/freedesktop/Tracker3/Miner/Files]
+# Tracker indexes the whole home directory in the background: sustained CPU and
+# sustained writes to a slow eMMC, to power a search feature that costs more
+# than it is worth here. Index nothing, and never index removable media.
+#
+# Path is the Tracker 3 one (/org/freedesktop/Tracker3/Miner/Files/), not the
+# Tracker 2 path - Debian 13 ships Tracker 3 and the old path is silently ignored.
+# With --no-install-recommends, tracker may not be pulled in at all; these keys
+# are belt-and-braces for the case where something depends on it.
+index-recursive-directories=@as []
+index-single-directories=@as []
+index-removable-devices=false
+index-optical-discs=false
+index-on-battery=false
+throttle=15
+crawling-interval=-2
+enable-monitors=false
+
+[org/gnome/desktop/privacy]
+# Do not spend IO tracking file usage we are not going to search.
+remember-recent-files=false
+remove-old-trash-files=true
+remove-old-temp-files=true
+old-files-age=uint32 7
+
+[org/gnome/desktop/session]
+# Blank the screen reasonably quickly; the panel backlight is a big power draw.
+idle-delay=uint32 300
+
+[org/gnome/settings-daemon/plugins/power]
+sleep-inactive-battery-timeout=900
+sleep-inactive-battery-type='suspend'
+sleep-inactive-ac-timeout=1800
+sleep-inactive-ac-type='suspend'
+power-button-action='suspend'
+
+[org/gnome/desktop/a11y/mouse]
+# Long-press to right-click. Essential on a touchscreen with no mouse buttons.
+secondary-click-enabled=true
+secondary-click-time=0.6
+
+[org/gnome/desktop/peripherals/touchpad]
+tap-to-click=true
+natural-scroll=true
+
+[org/gnome/mutter]
+# Do not keep a full-resolution scaled copy of every workspace thumbnail.
+dynamic-workspaces=true
+# Edge tiling is cheap and genuinely useful at 1280x800.
+edge-tiling=true
+
+[org/gnome/shell]
+# Ship a small, useful favourites bar rather than the stock list, which
+# references applications this image does not install.
+favorite-apps=['org.gnome.Nautilus.desktop', 'firefox-esr.desktop', 'org.gnome.Terminal.desktop', 'org.gnome.Settings.desktop']
+
+[org/gnome/software]
+# No background app-store refresh: it is a periodic multi-megabyte download and
+# a burst of CPU on a machine that has neither to spare.
+download-updates=false
+download-updates-on-battery=false
+first-run=false
+
+[org/gnome/desktop/background]
+# A solid colour rather than a large JPEG that must be decoded and kept resident.
+picture-uri=''
+picture-uri-dark=''
+primary-color='#1c1c28'
+secondary-color='#1c1c28'
+color-shading-type='solid'
+
+[org/gnome/desktop/screensaver]
+picture-uri=''
+primary-color='#1c1c28'
+lock-delay=uint32 30

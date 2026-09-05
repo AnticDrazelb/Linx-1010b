@@ -1,0 +1,42 @@
+# GRUB configuration tuned for the Linx 1010B (Intel Atom Z3735F, Bay Trail-T).
+#
+# NOTE: this machine has a 32-bit UEFI implementation on a 64-bit CPU.
+# The bootloader MUST be grub-efi-ia32; the kernel is amd64. See docs/boot-32bit-uefi.md.
+
+GRUB_DEFAULT=0
+GRUB_TIMEOUT=1
+GRUB_TIMEOUT_STYLE=menu
+GRUB_DISTRIBUTOR="Linx 1010B Linux"
+
+# Default command line.
+#   quiet loglevel=3   - less console spam, marginally faster boot on slow eMMC
+#   i915.fastboot=1    - do not re-program the display pipe if firmware already set it,
+#                        removes a visible mode-set flicker and ~0.3s of boot
+#   i915.enable_fbc=1  - framebuffer compression; cuts display memory bandwidth, which is
+#                        the main bottleneck on Gen7 Bay Trail graphics
+#   nmi_watchdog=0     - frees a per-CPU timer and a little power; no value on a tablet
+GRUB_CMDLINE_LINUX_DEFAULT="quiet loglevel=3 i915.fastboot=1 i915.enable_fbc=1 nmi_watchdog=0"
+GRUB_CMDLINE_LINUX=""
+
+# Bay Trail firmware reports a usable GOP; keeping the native mode avoids a re-train.
+GRUB_GFXMODE=1280x800
+GRUB_GFXPAYLOAD_LINUX=keep
+
+# The eMMC is slow. Do not probe other OSes on every update unless you dual-boot;
+# set this to false and run `os-prober` manually if you keep Windows.
+GRUB_DISABLE_OS_PROBER=true
+GRUB_DISABLE_RECOVERY=false
+GRUB_DISABLE_SUBMENU=y
+
+# --- Optional flags, enabled by `linx-tune`, documented in docs/troubleshooting.md ---
+#
+# ACPI GPE storm (a kworker thread pinned near 100% CPU). The GPE number is
+# per-unit; run `linx-gpe-scan` to find yours, then append e.g. acpi_mask_gpe=0x6E
+#
+# Random freezes under load on some Bay Trail units (a C-state erratum):
+#   intel_idle.max_cstate=1
+# This costs a lot of battery life. Only use it if you actually see freezes, and
+# install intel-microcode first - current microcode fixes this on most units.
+#
+# Panel mounted in portrait / wrong console orientation:
+#   fbcon=rotate:1 video=DSI-1:panel_orientation=right_side_up

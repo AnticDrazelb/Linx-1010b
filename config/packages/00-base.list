@@ -1,0 +1,30 @@
+# Minimal bootable Debian base. debootstrap runs with --variant=minbase, so
+# everything the system needs is listed explicitly here or in a later list.
+# APT::Install-Recommends is off (see overlay/etc/apt/apt.conf.d/99-linx), so
+# nothing arrives that is not named.
+
+systemd-sysv
+systemd-timesyncd
+systemd-resolved
+dbus-broker
+init
+udev
+kmod
+libpam-systemd
+locales
+tzdata
+ca-certificates
+sudo
+less
+nano
+bash-completion
+file
+psmisc
+procps
+iproute2
+iputils-ping
+curl
+gpg
+apt-utils
+console-setup
+keyboard-configuration

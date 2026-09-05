@@ -1,0 +1,43 @@
+# Userspace needed to make this tablet's hardware actually work.
+
+# Networking.
+network-manager
+wpasupplicant
+iw
+wireless-regdb
+
+# Bluetooth. bluez-firmware carries some Realtek BT blobs not in firmware-realtek.
+bluez
+bluez-firmware
+
+# Audio. PipeWire rather than PulseAudio: lower latency, noticeably lower idle
+# CPU, and it is what current GNOME expects.
+pipewire
+pipewire-audio
+pipewire-pulse
+wireplumber
+libspa-0.2-bluetooth
+# UCM profiles - without these the Bay Trail SST card enumerates but routes
+# audio to nowhere. This is the other half of the audio fix.
+alsa-ucm-conf
+alsa-utils
+
+# Automatic screen rotation from the tablet's accelerometer, and ambient light.
+iio-sensor-proxy
+
+# Touchscreen and touchpad input. The Goodix controller needs no firmware and
+# no DMI quirk - it enumerates over ACPI as GDIX1001 and is handled in-kernel.
+libinput-tools
+xserver-xorg-input-libinput
+
+# Power: battery reporting on the AXP288 PMIC, plus tooling.
+upower
+powertop
+acpid
+
+# Compressed swap. Non-negotiable on 2 GB.
+systemd-zram-generator
+
+# eMMC health/trim.
+util-linux
+e2fsprogs

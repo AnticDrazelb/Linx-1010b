@@ -1,0 +1,13 @@
+// A 32 GB eMMC fills up fast and every apt operation is slow on this CPU.
+
+// Do not pull in recommended packages: this is the single biggest lever for
+// keeping the install small. Everything this image actually needs is named
+// explicitly in config/packages/.
+APT::Install-Recommends "false";
+APT::Install-Suggests "false";
+
+// Do not keep the downloaded .debs after install.
+Binary::apt::APT::Keep-Downloaded-Packages "false";
+
+// Skip translation files for languages nobody on this tablet reads.
+Acquire::Languages "none";

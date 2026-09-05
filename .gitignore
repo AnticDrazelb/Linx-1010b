@@ -1,0 +1,9 @@
+# Build artefacts
+work/
+out/
+kernel/linux/
+kernel/out/
+*.iso
+*.iso.sha256
+*.squashfs
+*.deb

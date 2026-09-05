@@ -1,0 +1,26 @@
+# Kernel, bootloader and the firmware this specific machine needs.
+
+linux-image-amd64
+initramfs-tools
+
+# THE critical package for this tablet: a 32-bit EFI GRUB for a 64-bit system.
+# The firmware on the Linx 1010B is IA32 UEFI and will not load BOOTX64.EFI.
+grub-efi-ia32
+grub-efi-ia32-bin
+# Included so the produced ISO also boots on ordinary 64-bit UEFI machines,
+# which makes the image far easier to test before committing it to the tablet.
+grub-efi-amd64-bin
+grub-common
+efibootmgr
+dosfstools
+
+# CPU microcode. Current Intel microcode fixes the Bay Trail C-state erratum
+# that causes random hard freezes, which is why this is not optional here.
+intel-microcode
+
+# Realtek SDIO Wi-Fi + Bluetooth firmware (RTL8723BS and relatives).
+firmware-realtek
+# Intel SST audio DSP firmware, Bay Trail GPU firmware, misc SoC blobs.
+firmware-misc-nonfree
+firmware-intel-sound
+firmware-linux-free

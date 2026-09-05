@@ -1,0 +1,21 @@
+# Runtime power management. Bay Trail's idle power is dominated by devices that
+# never get told to sleep; these rules are the durable subset of what
+# `powertop --auto-tune` would apply, minus the parts that break input devices.
+
+# Let every PCI/SoC device use runtime PM.
+ACTION=="add", SUBSYSTEM=="pci", ATTR{power/control}="auto"
+ACTION=="add", SUBSYSTEM=="platform", ATTR{power/control}="auto"
+ACTION=="add", SUBSYSTEM=="i2c", ATTR{power/control}="auto"
+ACTION=="add", SUBSYSTEM=="spi", ATTR{power/control}="auto"
+ACTION=="add", SUBSYSTEM=="mmc", ATTR{power/control}="auto"
+
+# USB autosuspend, but NOT for input devices (HID keyboards/mice/touch wake
+# slowly and drop the first keystroke) and not for the dock's hub.
+ACTION=="add", SUBSYSTEM=="usb", ATTR{bDeviceClass}!="09", ATTR{power/control}="auto"
+ACTION=="add", SUBSYSTEM=="usb", ENV{ID_INPUT}=="1", ATTR{power/control}="on"
+
+# SATA/AHCI link power saving is irrelevant here (no SATA), SD/SDIO is handled
+# by the mmc rule above.
+
+# Audio codec autosuspend after one second of silence.
+ACTION=="add", SUBSYSTEM=="sound", KERNEL=="card*", ATTR{power/control}="auto"

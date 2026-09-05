@@ -1,0 +1,10 @@
+# Packages needed only inside the live ISO environment. The installer removes
+# these from the installed system.
+
+live-boot
+live-config
+live-config-systemd
+squashfs-tools
+parted
+gdisk
+rsync
