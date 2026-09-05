@@ -188,43 +188,55 @@ This costs close to half the battery life, which is why it is not a default.
 Particularly if it joins a public hotspot happily while refusing your home
 network, and removing the password from your network changes nothing.
 
-That combination points at the **regulatory domain**, not at security. With no
-domain set the kernel uses "world" (00), in which channels 12 and 13 are flagged
-no-IR: the radio may listen on them but must not transmit. The network therefore
-appears in a scan and then cannot be joined. UK routers commonly use channel 12
-or 13; public hotspots almost always use 1, 6 or 11, which is why one works and
-the other does not.
-
-Check what you have and what the network is on:
+Get the facts before changing anything. These two commands identify the cause
+in almost every case:
 
 ```bash
-iw reg get | head -3          # "country 00" means the world domain
-nmcli dev wifi list           # CHAN column - 12 or 13 is the giveaway
+nmcli dev wifi list                                    # real CHAN and SECURITY
+sudo journalctl -b -u NetworkManager --no-pager | tail -40   # why it failed
 ```
 
-Fix it:
+The journal names the failure: a timeout during association points at the AP
+refusing the client, whereas a 4-way-handshake failure points at credentials or
+PMF.
 
-```bash
-sudo linx-tune wifi-region GB
-```
+Causes, in the order they are worth trying:
 
-Images built after this default to GB. On an older image, `sudo iw reg set GB`
-applies it immediately for testing.
+**802.11ax (Wi-Fi 6) enabled on 2.4 GHz.** The most likely cause on a modern
+router. The RTL8723BS driver is old and predates HE; some routers advertising
+`ax` on 2.4 GHz will not associate an 802.11n-only client, and enabling `ax`
+often forces Protected Management Frames on as well, which this driver does not
+support either. In the router's wireless settings, change the 2.4 GHz mode from
+something like *802.11g/n/ax mixed* to **802.11g/n mixed** (or b/g/n). This
+costs nothing - the tablet is 802.11n at best.
 
-Two other causes worth knowing, in the order to try them:
-
-**PMF / WPA3.** The RTL8723BS driver predates Protected Management Frames. A
-router in WPA2/WPA3 transition mode, or with PMF set to required, can refuse it.
-Force the connection down to plain WPA2 with PMF off:
+**PMF / WPA3.** Same driver limitation, reachable from the client side. Force
+plain WPA2 with PMF disabled:
 
 ```bash
 nmcli con modify "<your SSID>" wifi-sec.key-mgmt wpa-psk wifi-sec.pmf 1
 nmcli con up "<your SSID>"
 ```
 
+On the router, prefer WPA2-PSK (AES) over any WPA2/WPA3 mixed mode.
+
+**Automatic channel selection.** Features branded "Smart WiFi", "Channel
+Optimization" or similar move the AP between channels, and can land it on 12 or
+13. In the world regulatory domain (00) those two are flagged no-IR - the radio
+may hear beacons but must not transmit - so the network appears in a scan and
+cannot be joined. Set the channel manually to 1, 6 or 11, and set the domain:
+
+```bash
+iw reg get | head -3          # "country 00" is the world domain
+sudo linx-tune wifi-region GB
+```
+
+Images built after this default to GB. Note that this only explains the symptom
+when the AP is actually on 12 or 13 - if the router reports channel 1, look at
+the two causes above instead.
+
 **5 GHz.** This chip is 2.4 GHz only. If the SSID you can see is the 5 GHz half
-of a dual-band router, there is nothing to connect to; use the 2.4 GHz SSID, or
-enable band steering on a single SSID.
+of a dual-band router, there is nothing to connect to; use the 2.4 GHz SSID.
 
 ## Wi-Fi drops, or a new MAC address every boot
 
