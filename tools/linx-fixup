@@ -1,0 +1,98 @@
+#!/usr/bin/env bash
+#
+# linx-fixup - apply post-release fixes to an already-installed Linx 1010B system.
+#
+# These are corrections to bugs found by running the image on real hardware,
+# packaged so an existing install can be brought up to date without rebuilding
+# and re-transferring a 700 MB image.
+#
+# Safe to run more than once. Run it with sudo, after installing to the eMMC:
+#
+#     sudo linx-fixup
+#
+# Every change is reported, and anything already correct is left alone.
+
+set -euo pipefail
+
+C_G=$'\033[1;32m'; C_Y=$'\033[1;33m'; C_B=$'\033[1;34m'; C_0=$'\033[0m'
+log()  { printf '%s==>%s %s\n' "$C_B" "$C_0" "$*"; }
+ok()   { printf '%s -->%s %s\n' "$C_G" "$C_0" "$*"; }
+skip() { printf '     %s(already correct)%s %s\n' "$C_Y" "$C_0" "$*"; }
+
+[ "$(id -u)" -eq 0 ] || { echo "Run with sudo: sudo linx-fixup" >&2; exit 1; }
+
+changed=0
+
+# --- 1. The desktop search indexer was never actually disabled --------------
+# Debian 13 / GNOME 48 renamed the tracker3 miners to "localsearch". The image
+# masked tracker-miner-fs-3.service and friends, which do not exist, so the mask
+# succeeded and did nothing while localsearch-3 indexed the home directory.
+log "Masking the desktop search indexer (localsearch)"
+for u in localsearch-3.service localsearch-control-3.service \
+         localsearch-writeback-3.service tinysparql-xdg-portal-3.service; do
+    link=/etc/systemd/user/$u
+    if [ -L "$link" ] && [ "$(readlink "$link")" = /dev/null ]; then
+        skip "$u"
+    else
+        systemctl --global mask "$u" >/dev/null 2>&1 || true
+        ok "masked $u"; changed=1
+    fi
+done
+# Stop it for any logged-in user right now, rather than waiting for a reboot.
+for uid in $(loginctl list-users --no-legend 2>/dev/null | awk '{print $1}'); do
+    systemctl --user -M "$uid@" stop localsearch-3.service 2>/dev/null || true
+done
+pkill -x localsearch-3 2>/dev/null || true
+
+# --- 2. Tracker dconf keys were written to a path nothing reads -------------
+# The schema ID is org.freedesktop.Tracker3.Miner.Files but its dconf path is
+# the lowercase /org/freedesktop/tracker/miner/files/. An earlier version of
+# this image used a CamelCase path derived from the ID, which no schema uses.
+log "Correcting the indexer's dconf path"
+DCONF=/etc/dconf/db/local.d/00-linx-performance
+if [ -f "$DCONF" ] && grep -q '^\[org/freedesktop/Tracker3/Miner/Files\]' "$DCONF"; then
+    sed -i 's|^\[org/freedesktop/Tracker3/Miner/Files\]|[org/freedesktop/tracker/miner/files]|' "$DCONF"
+    dconf update
+    ok "dconf path corrected and database rebuilt"; changed=1
+elif [ -f "$DCONF" ]; then
+    skip "dconf path"
+else
+    skip "no $DCONF on this system"
+fi
+
+# --- 3. USB autosuspend killed the keyboard dock's touchpad -----------------
+# The rule excluded input devices with ENV{ID_INPUT}=="1", but ID_INPUT is set
+# on devices in the input subsystem, not on their parent USB device, so the
+# match never fired and the dock was suspended along with everything else.
+log "Removing USB autosuspend (it disables the keyboard dock's touchpad)"
+RULES=/etc/udev/rules.d/60-linx-power.rules
+if [ -f "$RULES" ] && grep -q 'SUBSYSTEM=="usb".*power/control' "$RULES"; then
+    cp -a "$RULES" "$RULES.bak.$(date +%s)"
+    sed -i '/SUBSYSTEM=="usb".*power\/control/d' "$RULES"
+    cat >> "$RULES" <<'EOF'
+
+# USB power management is deliberately left alone. Autosuspending the keyboard
+# dock - a single USB composite device providing keyboard, mouse and HID
+# controls - stops the touchpad working, and the power saved is negligible
+# beside the panel backlight.
+EOF
+    udevadm control --reload-rules 2>/dev/null || true
+    ok "USB autosuspend rule removed"; changed=1
+else
+    skip "USB autosuspend rule"
+fi
+
+# Restore any USB device already suspended, so the touchpad works immediately.
+restored=0
+for f in /sys/bus/usb/devices/*/power/control; do
+    [ -w "$f" ] || continue
+    if [ "$(cat "$f" 2>/dev/null)" != "on" ]; then echo on > "$f" 2>/dev/null && restored=$((restored+1)); fi
+done
+[ "$restored" -gt 0 ] && ok "woke $restored USB device(s) - try the touchpad now"
+
+printf '\n'
+if [ "$changed" = 1 ]; then
+    ok "Fixes applied. Log out and back in (or reboot) for all of them to take effect."
+else
+    ok "Nothing to do - this system already has all the fixes."
+fi
