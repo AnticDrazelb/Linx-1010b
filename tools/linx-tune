@@ -71,6 +71,9 @@ linx-tune - Linx 1010B tuning switches
  Storage / logs
   logs-volatile       Journal in RAM                     [default, saves eMMC writes]
   logs-persistent     Journal on disk                    [needed to debug boot issues]
+  initramfs-slim      Rebuild initramfs with only this   [55MB -> ~10MB, faster boot;
+                      machine's modules                   backs up the working one]
+  initramfs-full      Restore the generic initramfs      [default, safe]
 
  Services
   printing-on         Enable CUPS + Avahi discovery
@@ -203,6 +206,36 @@ greeter-gdm)
     echo "/usr/sbin/gdm3" > /etc/X11/default-display-manager
     systemctl enable gdm3
     say "switched to GDM; reboot"
+    ;;
+
+initramfs-slim)
+    need_root "$@"
+    # Debian builds a generic initramfs (MODULES=most) containing drivers for
+    # essentially every storage and input controller. That is correct for install
+    # media, which must boot unknown hardware - but on an INSTALLED system it is
+    # ~55 MB that the bootloader reads off a slow eMMC at every single boot.
+    #
+    # MODULES=dep includes only what this machine actually needs. It is safe here
+    # precisely because it runs ON the tablet, so it probes the real hardware.
+    # The risk is that a future hardware change (a different USB controller for
+    # the root device) leaves it unbootable, so keep the working one as a fallback.
+    kver=$(uname -r)
+    if [ -f "/boot/initrd.img-$kver" ] && [ ! -f "/boot/initrd.img-$kver.full" ]; then
+        cp -a "/boot/initrd.img-$kver" "/boot/initrd.img-$kver.full"
+        say "backed up the generic initramfs to /boot/initrd.img-$kver.full"
+    fi
+    sed -i 's/^MODULES=.*/MODULES=dep/' /etc/initramfs-tools/initramfs.conf
+    grep -q '^MODULES=' /etc/initramfs-tools/initramfs.conf || echo 'MODULES=dep' >> /etc/initramfs-tools/initramfs.conf
+    update-initramfs -u -k all
+    say "initramfs rebuilt: $(du -h "/boot/initrd.img-$kver" | cut -f1) (was $(du -h "/boot/initrd.img-$kver.full" | cut -f1))"
+    note "If the machine fails to boot after this, use the GRUB command line to"
+    note "load /boot/initrd.img-$kver.full, then run: linx-tune initramfs-full"
+    ;;
+initramfs-full)
+    need_root "$@"
+    sed -i 's/^MODULES=.*/MODULES=most/' /etc/initramfs-tools/initramfs.conf
+    update-initramfs -u -k all
+    say "generic initramfs restored"
     ;;
 
 logs-volatile)

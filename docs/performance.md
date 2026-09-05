@@ -4,14 +4,27 @@ Every item here is a trade-off. This document states the cost as well as the
 benefit, so you can reverse anything that does not suit you — most of it is one
 `linx-tune` command away.
 
-Rough targets on a Linx 1010B (Z3735F, 2 GB, eMMC). **These are design targets,
-not measurements — nothing in this repository has been benchmarked on hardware yet.**
+**Measured** from the first successful build, and from booting the resulting ISO
+in QEMU with 2 GB of RAM to match the tablet. Boot time is deliberately absent:
+under emulation it is meaningless, and on the real device it is dominated by eMMC
+speed.
 
-| | Stock Debian GNOME | This image (intended) |
-|---|---|---|
-| Installed size | ~5.5 GB | ~2.8 GB |
-| RAM at idle desktop | ~950 MB | ~550 MB |
-| Boot to login | ~55 s | ~30 s |
+| | Measured |
+|---|---|
+| Packages installed | 859 (including dependencies) |
+| Rootfs before stripping | 2826 MB |
+| Rootfs after stripping | **1756 MB** |
+| squashfs (zstd-19) | 606 MB |
+| ISO | **693 MB** |
+| initramfs | 55 MB (Debian's `MODULES=most`; see `linx-tune initramfs-slim`) |
+| RAM used at idle GNOME desktop | **640 MiB** |
+| Build time | ~4.5 min compute on 4 cores, plus ~1.5 GB of downloads |
+
+The 640 MiB reading came from a live-USB session, which carries squashfs cache
+overhead, so an installed system should sit a little below it. A stock Debian
+GNOME install is roughly 5.5 GB on disk and heavier at idle, but that comparison
+has not been measured on identical terms and is offered only as a rough sense of
+scale.
 
 ---
 

@@ -11,7 +11,8 @@ that silently corrupts any build started under `/mnt/c`.
 
 - ~12 GB free disk
 - The build downloads ~1.5 GB of packages
-- 20–40 minutes on a modern desktop
+- Measured: ~4.5 minutes of compute on 4 cores. Wall-clock is dominated by your
+  download speed, so budget 10-20 minutes on a typical connection.
 
 ```bash
 make deps

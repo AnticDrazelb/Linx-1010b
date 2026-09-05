@@ -8,12 +8,15 @@ The goal is a desktop that is actually usable on this hardware in 2026: nothing
 installed that the machine cannot use, everything installed that it needs, and every
 known Bay Trail performance trap addressed by default.
 
-> **Status: this repository has not been built or run on hardware yet.**
-> Every script is syntax-checked and the hardware facts are sourced (see
-> [docs/hardware.md](docs/hardware.md)), but no ISO has been produced from it and
-> no tablet has booted it. Treat the first build as a bring-up exercise, and see
-> [Known unknowns](#known-unknowns) below for the specific things most likely to
-> need adjusting.
+> **Status: builds successfully, and the resulting ISO boots under 32-bit UEFI.
+> Not yet run on the tablet itself.**
+> The build has been run end to end, producing a 693 MB ISO, and that ISO has been
+> booted in QEMU against `ovmf-ia32` — real IA32 UEFI firmware in front of a 64-bit
+> CPU, the same constraint the tablet imposes — from a USB mass-storage device,
+> reaching a working GNOME desktop with the tuning applied. That verifies the
+> hardest part, `BOOTIA32.EFI` loading a 64-bit kernel, without the hardware.
+> Everything hardware-specific — audio, Wi-Fi, touchscreen, backlight, battery —
+> remains unverified. See [Known unknowns](#known-unknowns).
 
 ---
 
@@ -25,7 +28,7 @@ on macOS, use the Docker path in the same document:
 
 ```bash
 make deps        # install debootstrap, xorriso, grub-efi-ia32-bin, ...
-sudo make iso    # ~20-40 min, produces out/linx1010b-gnome-trixie-YYYYMMDD.iso
+sudo make iso    # produces out/linx1010b-gnome-trixie-YYYYMMDD.iso (~693 MB)
 ```
 
 Write it to a USB stick and boot the tablet:
@@ -110,6 +113,10 @@ Sources and per-device detail: [docs/hardware.md](docs/hardware.md).
 | `linx-tune` | Flips the documented trade-offs: C-states, Wi-Fi power saving, CPU governor, GDM vs LightDM, persistent logs, printing |
 | `linx-install` | Installs the live system to the eMMC |
 
+Plus one build-host tool, `tools/test-boot-qemu.sh`, which boots a built ISO under
+32-bit UEFI (`ovmf-ia32`) in QEMU. This reproduces the tablet's IA32-firmware
+constraint, so it catches a broken `BOOTIA32.EFI` before you ever write a USB stick.
+
 `linx-gpe-scan` is the one to run first on a new install. If your unit has a GPE
 storm, it is the largest single performance problem on the machine and nothing else
 you do will matter as much.
@@ -165,9 +172,14 @@ Things most likely to need adjustment on first contact with real hardware:
 3. **Wi-Fi MAC address.** Many of these units have no MAC in the Wi-Fi EEPROM and
    present a new random one each boot. NetworkManager is configured to use the
    permanent address; if yours has none, see [docs/troubleshooting.md](docs/troubleshooting.md).
-4. **The `-e --interval:appended_partition_2:all::` xorriso incantation** in stage 80
-   is the standard modern form, but xorriso is version-sensitive. If mastering fails,
-   that line is the first suspect.
+4. ~~The xorriso incantation in stage 80~~ — resolved. A real build produces a
+   valid image: MBR partition 2 of type `0xef` holding the ESP, with a `BOOTIA32.EFI`
+   that 32-bit OVMF loads and runs.
+
+What a QEMU boot cannot tell us, and the tablet will: whether `dsp_driver=2` gives
+working audio on your codec, whether the Goodix touchscreen and accelerometer come
+up, whether `pwm_lpss` produces a backlight device, and whether your unit has an
+ACPI GPE storm.
 
 ## Licence
 
