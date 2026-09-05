@@ -50,6 +50,8 @@ linx-tune - Linx 1010B tuning switches
  Wi-Fi
   wifi-powersave      Wi-Fi power management on          [default, better battery]
   wifi-stable         Wi-Fi power management off         [fixes drops, costs battery]
+  wifi-region <CC>    Set the regulatory domain          [default GB; channels 12-13
+                                                          are unusable without it]
 
  Stability
   cstate-safe         intel_idle.max_cstate=1            [fixes random freezes,
@@ -90,6 +92,8 @@ status() {
         "$(cat /sys/module/snd_intel_dspcfg/parameters/dsp_driver 2>/dev/null || echo n/a)"
     printf 'cpu governor     : %s\n' \
         "$(cat /sys/devices/system/cpu/cpu0/cpufreq/scaling_governor 2>/dev/null || echo n/a)"
+    printf 'wifi regdomain   : %s\n' \
+        "$(iw reg get 2>/dev/null | awk '/country/{print $2; exit}' || echo n/a)"
     printf 'wifi powersave   : %s\n' \
         "$(nmcli -t -f 802-11-wireless.powersave con show 2>/dev/null | head -1 || echo n/a)"
     printf 'journal storage  : %s\n' \
@@ -118,6 +122,22 @@ audio-sof)
     say "forced SOF driver; reboot"
     note "On Bay Trail this usually results in a card that enumerates but plays"
     note "nothing. Run 'linx-tune audio-sst' to go back."
+    ;;
+
+wifi-region)
+    need_root "$@"
+    CC=${2:-}
+    [ -n "$CC" ] || { echo "usage: linx-tune wifi-region <2-letter country code, e.g. GB>" >&2; exit 1; }
+    CC=$(printf '%s' "$CC" | tr '[:lower:]' '[:upper:]')
+    case $CC in [A-Z][A-Z]) ;; *) echo "Not a 2-letter country code: $CC" >&2; exit 1 ;; esac
+    sed -i '/ieee80211_regdom/d' /etc/modprobe.d/linx-wifi.conf
+    echo "options cfg80211 ieee80211_regdom=$CC" >> /etc/modprobe.d/linx-wifi.conf
+    # Apply now as well as at next boot.
+    iw reg set "$CC" 2>/dev/null || true
+    say "regulatory domain set to $CC (now, and at boot)"
+    iw reg get 2>/dev/null | grep -m1 country || true
+    note "In the world domain (00) channels 12 and 13 are receive-only, so"
+    note "networks on them show up in scans but cannot be joined."
     ;;
 
 wifi-powersave)

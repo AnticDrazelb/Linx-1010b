@@ -183,6 +183,49 @@ The Bay Trail C-state erratum.
 
 This costs close to half the battery life, which is why it is not a default.
 
+## Wi-Fi sees the network but will not connect
+
+Particularly if it joins a public hotspot happily while refusing your home
+network, and removing the password from your network changes nothing.
+
+That combination points at the **regulatory domain**, not at security. With no
+domain set the kernel uses "world" (00), in which channels 12 and 13 are flagged
+no-IR: the radio may listen on them but must not transmit. The network therefore
+appears in a scan and then cannot be joined. UK routers commonly use channel 12
+or 13; public hotspots almost always use 1, 6 or 11, which is why one works and
+the other does not.
+
+Check what you have and what the network is on:
+
+```bash
+iw reg get | head -3          # "country 00" means the world domain
+nmcli dev wifi list           # CHAN column - 12 or 13 is the giveaway
+```
+
+Fix it:
+
+```bash
+sudo linx-tune wifi-region GB
+```
+
+Images built after this default to GB. On an older image, `sudo iw reg set GB`
+applies it immediately for testing.
+
+Two other causes worth knowing, in the order to try them:
+
+**PMF / WPA3.** The RTL8723BS driver predates Protected Management Frames. A
+router in WPA2/WPA3 transition mode, or with PMF set to required, can refuse it.
+Force the connection down to plain WPA2 with PMF off:
+
+```bash
+nmcli con modify "<your SSID>" wifi-sec.key-mgmt wpa-psk wifi-sec.pmf 1
+nmcli con up "<your SSID>"
+```
+
+**5 GHz.** This chip is 2.4 GHz only. If the SSID you can see is the 5 GHz half
+of a dual-band router, there is nothing to connect to; use the 2.4 GHz SSID, or
+enable band steering on a single SSID.
+
 ## Wi-Fi drops, or a new MAC address every boot
 
 ```bash
