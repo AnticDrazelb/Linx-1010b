@@ -65,6 +65,9 @@ linx-tune - Linx 1010B tuning switches
   profile-battery     CPU governor=powersave             [slowest, longest runtime]
 
  Desktop
+  trim-gsd            Stop settings-daemon plugins for   [~6 fewer processes]
+                      hardware this tablet lacks
+  restore-gsd         Start them again
   animations-off      Disable GNOME animations           [default, much snappier]
   animations-on       Re-enable them
   greeter-lite        Replace GDM with LightDM           [frees ~120 MB]
@@ -206,6 +209,42 @@ UNIT
     systemctl enable --now linx-cpu-governor.service >/dev/null 2>&1 || true
     say "CPU governor set to $gov (persisted)"
     [ "$gov" = performance ] && note "The Z3735F has no fan. Sustained performance mode will thermally throttle anyway."
+    ;;
+
+trim-gsd|restore-gsd)
+    need_root "$@"
+    # gnome-settings-daemon runs one process per plugin, whether or not the
+    # hardware exists. Individually they are small - a few hundred kB of private
+    # memory each - so this is tidying rather than a transformation. It is worth
+    # doing mainly because each is also a scheduler entity and a D-Bus client on
+    # a machine with four slow cores.
+    #
+    # NOT in this list, deliberately:
+    #   XSettings  - required by X11 applications, which includes any AppImage
+    #   Rfkill     - airplane mode and the wireless kill switch
+    #   Power      - battery, backlight and idle handling
+    #   Sound, MediaKeys, Keyboard, Housekeeping, A11ySettings, Datetime
+    GSD_UNUSED=(
+        org.gnome.SettingsDaemon.Wacom.service             # no graphics tablet
+        org.gnome.SettingsDaemon.Smartcard.service         # no card reader
+        org.gnome.SettingsDaemon.Wwan.service              # no cellular modem
+        org.gnome.SettingsDaemon.PrintNotifications.service # printing is masked
+        org.gnome.SettingsDaemon.UsbProtection.service     # needs lockdown config
+        org.gnome.SettingsDaemon.Sharing.service           # not a file/screen share host
+        org.gnome.SettingsDaemon.Color.service             # fixed uncalibrated panel
+    )
+    if [ "$1" = trim-gsd ]; then
+        for u in "${GSD_UNUSED[@]}"; do
+            systemctl --global mask "$u" >/dev/null 2>&1 || true
+        done
+        say "masked ${#GSD_UNUSED[@]} settings-daemon plugins; log out and back in"
+        note "Re-enable with: sudo linx-tune restore-gsd"
+    else
+        for u in "${GSD_UNUSED[@]}"; do
+            systemctl --global unmask "$u" >/dev/null 2>&1 || true
+        done
+        say "settings-daemon plugins restored; log out and back in"
+    fi
     ;;
 
 animations-off) gsettings set org.gnome.desktop.interface enable-animations false; say "animations off" ;;
