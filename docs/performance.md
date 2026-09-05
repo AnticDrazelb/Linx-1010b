@@ -172,6 +172,75 @@ half the battery life.
 
 ---
 
+## Can the microSD card make it faster?
+
+Short answer: no, and two of the obvious ideas make it slower. It is still worth
+using, but for space rather than speed.
+
+**Why not speed.** Desktop responsiveness is dominated by small random reads. The
+internal eMMC is generally better at those than a microSD card - often several
+times better unless the card carries an A1 or A2 rating, and those ratings
+guarantee only 1500 and 4000 random read IOPS respectively, which is not a lot.
+Anything you move onto the card that is read at random gets slower, not faster.
+
+**Do not use the card as a cache for the eMMC.** `bcache` and `lvmcache` speed up
+a slow device by putting a fast one in front of it. Here the relationship is the
+wrong way round: the card is the slower device. It adds a layer of indirection,
+a write-back failure mode and a second thing that must be present at boot, in
+exchange for making reads worse.
+
+**Do not put the browser cache or `~/.cache` on it.** That is small-random-write
+traffic, the worst case for a card, and it wears it out quickly.
+
+**Do not make it the primary swap.** zram already provides swap that is roughly
+two orders of magnitude faster, because it is RAM. Swapping to a card is what
+zram exists to avoid.
+
+### What the card is genuinely good for
+
+**Bulk data that is read sequentially and written rarely** - music, video,
+photos, documents, downloads, disk images. Sequential throughput is the one thing
+cards are reasonable at, and moving this material off the eMMC has a real
+indirect benefit: **flash slows down markedly as it fills**, because the
+controller has fewer free blocks to work with for wear levelling and garbage
+collection. Keeping the 29 GB eMMC comfortably empty is worth more than any
+tuning parameter on this page.
+
+```bash
+# One ext4 partition on the card, mounted under your home directory.
+sudo mkfs.ext4 -L linxdata /dev/mmcblkNp1        # check N with linx-report storage
+sudo mkdir -p /mnt/sd
+
+# nofail matters: without it the machine will not boot with the card removed.
+echo 'LABEL=linxdata  /mnt/sd  ext4  defaults,noatime,nofail,x-systemd.device-timeout=5s  0 2' \
+    | sudo tee -a /etc/fstab
+sudo systemctl daemon-reload && sudo mount -a
+sudo chown "$USER:$USER" /mnt/sd
+
+# Point the bulky home directories at it.
+for d in Videos Music Pictures Downloads; do
+    mkdir -p "/mnt/sd/$d"
+    [ -d "$HOME/$d" ] && mv "$HOME/$d"/* "/mnt/sd/$d/" 2>/dev/null
+    rm -rf "$HOME/$d" && ln -s "/mnt/sd/$d" "$HOME/$d"
+done
+```
+
+**An emergency second swap tier**, if and only if you are actually running out of
+memory and being OOM-killed. Give it a *lower* priority than zram, so it is used
+only once zram is full. This does not make anything faster - it trades a crash
+for a period of severe slowness, which is sometimes the better trade.
+
+```bash
+sudo fallocate -l 2G /mnt/sd/swapfile
+sudo chmod 600 /mnt/sd/swapfile && sudo mkswap /mnt/sd/swapfile
+echo '/mnt/sd/swapfile  none  swap  sw,pri=10,nofail  0 0' | sudo tee -a /etc/fstab
+sudo swapon -a     # zram is priority 100, so this is only reached when zram is full
+```
+
+Check whether you need it first: `linx-report memory`. If zram's *stored* figure
+is nowhere near its disksize, you are not short of memory and this will do
+nothing but wear the card.
+
 ## Things deliberately not done
 
 - **`f2fs` root.** Genuinely better suited to eMMC than ext4, but GRUB's f2fs
