@@ -164,22 +164,43 @@ r_services() {
     systemctl --failed --no-legend 2>/dev/null | sed 's/^/  /' || true
 }
 
-case "${1:-all}" in
-    system)  r_system ;;
-    cpu)     r_cpu ;;
-    memory)  r_memory ;;
-    storage) r_storage ;;
-    audio)   r_audio ;;
-    input)   r_input ;;
-    display) r_display ;;
-    network) r_network ;;
-    power)   r_power ;;
-    gpe)     r_gpe ;;
-    services) r_services ;;
-    all)
-        r_system; r_cpu; r_memory; r_storage; r_display
-        r_audio; r_input; r_network; r_power; r_gpe; r_services
-        printf '\nTip: linx-report > report.txt 2>&1  to capture all of this.\n'
-        ;;
-    *) echo "usage: linx-report [system|cpu|memory|storage|audio|input|display|network|power|gpe|services|all]" >&2; exit 1 ;;
-esac
+usage() {
+    echo "usage: linx-report [section...]" >&2
+    echo "  sections: system cpu memory storage display audio input network power gpe services" >&2
+    echo "  groups:   all (default), hw (display audio input network power)" >&2
+    exit 1
+}
+
+run_section() {
+    case "$1" in
+        system)   r_system ;;
+        cpu)      r_cpu ;;
+        memory)   r_memory ;;
+        storage)  r_storage ;;
+        audio)    r_audio ;;
+        input)    r_input ;;
+        display)  r_display ;;
+        network)  r_network ;;
+        power)    r_power ;;
+        gpe)      r_gpe ;;
+        services) r_services ;;
+        # Everything that depends on the actual machine, for reporting a problem.
+        hw)       r_display; r_audio; r_input; r_network; r_power ;;
+        all)
+            r_system; r_cpu; r_memory; r_storage; r_display
+            r_audio; r_input; r_network; r_power; r_gpe; r_services
+            printf '\nTip: linx-report > report.txt 2>&1  to capture all of this.\n'
+            ;;
+        *) echo "unknown section: $1" >&2; usage ;;
+    esac
+}
+
+# Accept any number of sections. Previously only "$1" was examined, so
+# "linx-report input network power" silently printed the input section and
+# discarded the rest - which is exactly the sort of thing that wastes someone's
+# time when they are typing on a tablet to report a fault.
+if [ $# -eq 0 ]; then
+    run_section all
+else
+    for sec in "$@"; do run_section "$sec"; done
+fi
