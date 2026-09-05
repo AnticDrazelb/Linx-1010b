@@ -22,16 +22,31 @@ TARGET=${1:-}
 MNT=/mnt/linx-install
 
 # --- pick the target ---------------------------------------------------------
+# Report the MMC device type: "MMC" for the soldered-down eMMC, "SD" for a card
+# in the microSD slot.
+#
+# Do NOT use /sys/block/*/removable for this. An SD card behind an SDHCI
+# controller reports removable=0 exactly like the internal eMMC, so that
+# attribute cannot tell them apart, and picking "the first non-removable mmcblk"
+# will happily offer to erase somebody's microSD card while labelling it
+# "internal". /sys/block/mmcblkN/device/type is the attribute that actually
+# distinguishes them.
+mmc_type() {
+    cat "/sys/block/$1/device/type" 2>/dev/null || echo UNKNOWN
+}
+
 list_targets() {
-    # Internal eMMC is non-removable; the microSD slot and USB sticks are not.
     for d in /sys/block/mmcblk*; do
         [ -d "$d" ] || continue
         name=$(basename "$d")
-        # Skip the eMMC boot hardware partitions (mmcblk0boot0 etc).
+        # Skip the eMMC boot and RPMB hardware partitions.
         case "$name" in *boot*|*rpmb*) continue ;; esac
-        removable=$(cat "$d/removable" 2>/dev/null || echo 0)
         size=$(( $(cat "$d/size") * 512 / 1024 / 1024 / 1024 ))
-        kind="eMMC (internal)"; [ "$removable" = "1" ] && kind="removable card"
+        case "$(mmc_type "$name")" in
+            MMC)     kind="eMMC (internal, soldered)" ;;
+            SD)      kind="SD card (REMOVABLE - almost certainly not what you want)" ;;
+            *)       kind="unknown type - check before using" ;;
+        esac
         printf '  /dev/%-12s %4dG  %s\n' "$name" "$size" "$kind"
     done
 }
@@ -40,11 +55,12 @@ if [ -z "$TARGET" ]; then
     log "Available storage devices:"
     list_targets
     echo
-    # Prefer the non-removable eMMC as the suggestion.
+    # Suggest only a device that genuinely reports itself as eMMC.
     for d in /sys/block/mmcblk*; do
-        case "$(basename "$d")" in *boot*|*rpmb*) continue ;; esac
-        if [ "$(cat "$d/removable" 2>/dev/null || echo 0)" = "0" ]; then
-            TARGET=/dev/$(basename "$d"); break
+        name=$(basename "$d")
+        case "$name" in *boot*|*rpmb*) continue ;; esac
+        if [ "$(mmc_type "$name")" = "MMC" ]; then
+            TARGET=/dev/$name; break
         fi
     done
     [ -n "$TARGET" ] || die "Could not identify the internal eMMC. Pass it explicitly: linx-install /dev/mmcblkN"
@@ -52,6 +68,18 @@ if [ -z "$TARGET" ]; then
 fi
 
 [ -b "$TARGET" ] || die "$TARGET is not a block device"
+
+# Refuse an SD card unless the user insists. Wiping the card someone keeps their
+# photos on, because it happened to enumerate first, is not an acceptable
+# failure mode for a tool whose whole job is to erase a disk.
+tgt_name=$(basename "$TARGET")
+if [ "$(mmc_type "$tgt_name")" = "SD" ] && [ "${LINX_ALLOW_SD:-0}" != "1" ]; then
+    die "$TARGET is an SD card (removable), not the internal eMMC.
+Installing here is almost certainly a mistake. The internal eMMC is the device
+whose /sys/block/<dev>/device/type reads MMC - run 'linx-report storage' to see
+what is what. If you really do mean to install to this card, re-run with
+LINX_ALLOW_SD=1."
+fi
 
 # Refuse to install onto the device we are running from.
 live_src=$(findmnt -n -o SOURCE / 2>/dev/null || true)
@@ -75,6 +103,23 @@ ${C_R}================= THIS WILL ERASE EVERYTHING =================${C_0}
 
 CONFIRM
 lsblk -o NAME,SIZE,FSTYPE,LABEL,PARTLABEL "$TARGET" 2>/dev/null || true
+
+# BitLocker-encrypted Windows is worth calling out separately: without the
+# recovery key that data is gone for good, and people do not always know their
+# machine is encrypted.
+if lsblk -no FSTYPE "$TARGET" 2>/dev/null | grep -qi bitlocker; then
+    printf '\n%s' "$C_Y"
+    cat <<'BITLOCKER'
+  NOTE: this device contains a BitLocker-encrypted Windows partition.
+
+  Erasing it is permanent. If you might ever want that Windows install back,
+  make sure you have its BitLocker recovery key saved somewhere (it is usually
+  in your Microsoft account at account.microsoft.com/devices/recoverykey)
+  BEFORE continuing - and note that the key alone does not restore anything
+  once the partition is overwritten. It only helps if you image the disk first.
+BITLOCKER
+    printf '%s\n' "$C_0"
+fi
 echo
 printf 'Type the device name (%s) to confirm, anything else to abort: ' "$TARGET"
 read -r reply

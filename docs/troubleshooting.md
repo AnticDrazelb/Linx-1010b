@@ -155,8 +155,8 @@ To force a console/boot orientation, uncomment in `/etc/default/grub`:
 fbcon=rotate:1 video=DSI-1:panel_orientation=right_side_up
 ```
 
-then `sudo update-grub`. Check the actual connector name first with
-`linx-report display` — it may be `eDP-1` rather than `DSI-1`.
+then `sudo update-grub`. The connector name on this tablet is confirmed as
+**`DSI-1`** (`card0-DSI-1 connected`); `linx-report display` will show it.
 
 ---
 

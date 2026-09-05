@@ -53,6 +53,36 @@ The fix is to put both modules in the initramfs, which this image does via
 `overlay/etc/initramfs-tools/modules`. `linx-report display` reports it if the
 backlight device is missing.
 
+### Confirmed on hardware
+
+Values read from a running Linx 1010B with `linx-report`, replacing what was
+previously inferred:
+
+| | |
+|---|---|
+| `sys_vendor` / `product_name` | `LINX` / `LINX1010B` |
+| BIOS | `LINX1010B.R22.03.010`, 2015-07-24 |
+| EFI firmware | **32-bit** (as expected — this is the whole problem) |
+| CPU | `Intel(R) Atom(TM) CPU Z3735F @ 1.33GHz`, 4 cores |
+| cpufreq | driver `intel_cpufreq`, governor `schedutil` |
+| Panel connector | **`card0-DSI-1`** (not eDP — use this name for `video=` arguments) |
+| Backlight | `intel_backlight`, working, 0–100 |
+| Audio card | `bytcr-rt5640` — the **rt5640** codec, on the legacy SST stack |
+| Internal storage | **`mmcblk1`**, 29.1 GB (not `mmcblk0`) |
+| microSD slot | enumerates as a separate `mmcblkN`, `device/type` = `SD` |
+| Session | Wayland |
+
+Two things to note from that list:
+
+**The internal eMMC is `mmcblk1`, and the microSD is another `mmcblk`.** Device
+numbering is not stable and `removable` reads 0 for *both*. The attribute that
+actually distinguishes them is `/sys/block/<dev>/device/type`, which reads `MMC`
+for the soldered eMMC and `SD` for a card. `linx-install` uses that; anything
+that keys off `removable` will eventually offer to erase somebody's SD card.
+
+**The panel connector is `DSI-1`.** If you need a rotation or panel-orientation
+kernel argument, that is the name to use.
+
 ### Audio — force the legacy SST driver
 
 Current kernels default to SOF (Sound Open Firmware) for Intel DSPs. On Bay
