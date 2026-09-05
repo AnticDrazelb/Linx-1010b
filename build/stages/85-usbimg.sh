@@ -62,9 +62,21 @@ mcopy -i "$FSIMG" "$ISO/live/vmlinuz"                  ::/live/
 mcopy -i "$FSIMG" "$ISO/live/initrd.img"               ::/live/
 mcopy -i "$FSIMG" "$ISO/live/filesystem.squashfs"      ::/live/
 
-# The menu for this layout. No cross-filesystem search is needed: $root is
-# already the partition GRUB was loaded from. The search line is kept only as a
-# belt-and-braces re-assertion and is harmless if it fails.
+# The menu for this layout. NO search command: $root is already the partition
+# GRUB was loaded from, and everything lives on it.
+#
+# This is not just simplification. On the Linx 1010B the search command fails
+# outright - "error: no such device" - even for files GRUB can demonstrably read
+# via an explicit device name:
+#
+#     grub> search --no-floppy --set=root --file /boot/grub/grub.cfg
+#     error: no such device: /boot/grub/grub.cfg
+#     grub> ls (hd0)/live/
+#     filesystem.squashfs  initrd.img  vmlinuz          <- same medium, readable
+#
+# So device enumeration for search is broken on this firmware while direct
+# access works. Any layout that depends on search finding the medium is
+# unreliable here; addressing everything relative to $root is not.
 cat > "$WORKDIR/usb-grub.cfg" <<'GRUBCFG'
 set default=0
 set timeout=5
@@ -72,8 +84,6 @@ set timeout=5
 # Deliberately NOT switching to gfxterm. On this panel a graphical terminal can
 # come up blank, and a menu you cannot see is worse than a plain text one.
 terminal_output console
-
-search --no-floppy --set=root --file /live/filesystem.squashfs
 
 set LINX_CMDLINE="boot=live components quiet loglevel=3 i915.fastboot=1 i915.enable_fbc=1 nmi_watchdog=0"
 
