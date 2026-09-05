@@ -73,6 +73,55 @@ chroot_sh() {
     chroot "$root" /bin/bash -euo pipefail -s
 }
 
+# Verify the build directory's filesystem can actually hold a Linux rootfs.
+#
+# This exists because of Windows/WSL2: building under /mnt/c (or any other
+# DrvFs/9p/NTFS/exFAT mount) appears to work and then produces a subtly broken
+# image - debootstrap cannot create device nodes, file ownership silently
+# collapses to the mounting user, and a case-insensitive filesystem merges files
+# whose names differ only in case. The failure surfaces much later, usually as a
+# rootfs that will not boot, so test it up front with real operations rather than
+# guessing from the filesystem name.
+check_fs_capable() {
+    local dir=$1
+    local t="$dir/.fscheck.$$"
+    mkdir -p "$t"
+    # Always clean up, even on the die() paths below.
+    trap 'rm -rf "$t" 2>/dev/null || true' RETURN
+
+    local fstype; fstype=$(stat -f -c %T "$dir" 2>/dev/null || echo unknown)
+    local hint="
+The build directory is on a '$fstype' filesystem.
+If you are on Windows/WSL2, you are almost certainly building under /mnt/c.
+Move the checkout onto the Linux filesystem instead, e.g:
+
+    cp -r /mnt/c/Users/you/Linx-1010b ~/Linx-1010b && cd ~/Linx-1010b
+
+See docs/build-on-windows.md."
+
+    # 1. Device nodes: debootstrap creates /dev/console, /dev/null and friends.
+    mknod "$t/devnode" c 1 3 2>/dev/null || die "Cannot create device nodes in $dir.$hint"
+
+    # 2. Ownership: the rootfs contains files owned by many different uids.
+    : > "$t/owned"
+    chown 12345:12345 "$t/owned" 2>/dev/null || die "Cannot set file ownership in $dir.$hint"
+    [ "$(stat -c '%u:%g' "$t/owned")" = "12345:12345" ] \
+        || die "File ownership is not preserved in $dir.$hint"
+
+    # 3. Case sensitivity: a Debian rootfs contains files differing only in case.
+    : > "$t/CaseTest"
+    if : > "$t/casetest" 2>/dev/null && [ "$(find "$t" -maxdepth 1 -iname 'casetest' | wc -l)" -lt 2 ]; then
+        die "The filesystem at $dir is case-insensitive.$hint"
+    fi
+
+    # 4. Extended attributes: rsync -X in the installer, and capabilities on
+    #    binaries such as ping, are stored as xattrs.
+    if command -v setfattr >/dev/null 2>&1; then
+        setfattr -n user.linxtest -v 1 "$t/owned" 2>/dev/null \
+            || warn "Extended attributes are not supported in $dir; file capabilities (e.g. on ping) will be lost."
+    fi
+}
+
 # Read a package list file, stripping comments and blank lines.
 read_pkg_list() {
     sed -e 's/#.*$//' -e '/^[[:space:]]*$/d' -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' "$1"

@@ -19,7 +19,9 @@ known Bay Trail performance trap addressed by default.
 
 ## Quick start
 
-On a Debian or Ubuntu build host (not the tablet — it does not have the disk space):
+On a Debian or Ubuntu build host (not the tablet — it does not have the disk space).
+**On Windows, use WSL2** — see [docs/build-on-windows.md](docs/build-on-windows.md);
+on macOS, use the Docker path in the same document:
 
 ```bash
 make deps        # install debootstrap, xorriso, grub-efi-ia32-bin, ...
@@ -127,6 +129,7 @@ overlay/          Files dropped verbatim into the rootfs (the tuning itself)
 tools/            linx-report, linx-gpe-scan, linx-tune
 installer/        linx-install.sh
 kernel/           Optional stripped custom kernel (fragment + builder)
+docker/           Containerised build environment (Windows / macOS)
 docs/             Hardware reference, boot theory, install, performance, fixes
 ```
 

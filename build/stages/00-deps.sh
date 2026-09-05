@@ -24,6 +24,13 @@ This is required to build the 32-bit EFI bootloader the Linx 1010B needs."
     warn "/usr/lib/grub/x86_64-efi missing (apt install grub-efi-amd64-bin).
 The ISO will boot the tablet but not ordinary 64-bit UEFI PCs, which makes testing harder."
 
+# Verify the build filesystem before anything else writes to it - see
+# docs/build-on-windows.md for why this matters on WSL2.
+log "Checking that $(dirname "$WORKDIR") can hold a Linux rootfs"
+mkdir -p "$WORKDIR"
+check_fs_capable "$WORKDIR"
+ok "Filesystem supports device nodes, ownership and case-sensitive names"
+
 df_avail=$(df -BG --output=avail "$(dirname "$WORKDIR")" | tail -1 | tr -dc '0-9')
 [ "${df_avail:-0}" -ge 12 ] || \
     warn "Only ${df_avail}G free at $(dirname "$WORKDIR"); a full build needs roughly 12G."

@@ -5,6 +5,10 @@
 A Debian or Ubuntu machine (or container) with root. **Not the tablet** — it does
 not have the disk space or the patience.
 
+On **Windows or macOS** there is no native `debootstrap`, so use WSL2 or Docker:
+[build-on-windows.md](build-on-windows.md) covers both, including the DrvFs trap
+that silently corrupts any build started under `/mnt/c`.
+
 - ~12 GB free disk
 - The build downloads ~1.5 GB of packages
 - 20–40 minutes on a modern desktop

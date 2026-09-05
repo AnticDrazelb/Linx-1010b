@@ -3,13 +3,14 @@
 
 SHELL := /bin/bash
 
-.PHONY: all iso deps clean distclean lint rootfs shell help
+.PHONY: all iso deps clean distclean lint rootfs shell docker help
 
 help:
 	@echo "Linx 1010B Linux image"
 	@echo
 	@echo "  make deps       Install host build dependencies (Debian/Ubuntu host)"
 	@echo "  make iso        Full build -> out/*.iso            (needs root)"
+	@echo "  make docker     Same, in a container (Windows/macOS via Docker Desktop)"
 	@echo "  make rootfs     Build the rootfs only, stop before squashfs"
 	@echo "  make shell      Open a shell inside the built rootfs (needs root)"
 	@echo "  make lint       Shellcheck every script"
@@ -26,6 +27,9 @@ deps:
 
 iso:
 	./build/build.sh
+
+docker:
+	./docker/build-in-docker.sh
 
 rootfs:
 	./build/build.sh 00 10 20 30 40 50
