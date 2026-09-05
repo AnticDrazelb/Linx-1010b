@@ -22,6 +22,17 @@ libspa-0.2-bluetooth
 alsa-ucm-conf
 alsa-utils
 
+# Hardware video decode. Bay Trail's GPU can decode H.264 in fixed-function
+# hardware; without a VA-API driver every video is decoded on a 1.33 GHz
+# in-order CPU instead, which is the difference between smooth 720p playback and
+# a slideshow with the fan-less chassis cooking itself.
+#
+# i965-va-driver is the correct one: it is the intel-vaapi-driver, covering Gen7
+# and earlier. intel-media-va-driver is for Gen8 (Broadwell) onwards and does
+# nothing on this hardware, so it is deliberately not installed.
+i965-va-driver
+vainfo
+
 # Automatic screen rotation from the tablet's accelerometer, and ambient light.
 iio-sensor-proxy
 

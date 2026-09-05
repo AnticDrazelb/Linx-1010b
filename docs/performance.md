@@ -241,6 +241,56 @@ Check whether you need it first: `linx-report memory`. If zram's *stored* figure
 is nowhere near its disksize, you are not short of memory and this will do
 nothing but wear the card.
 
+## Hardware video decode
+
+Bay Trail's GPU decodes H.264 in fixed-function hardware. Without a VA-API
+driver, every video is decoded on the CPU instead - four in-order cores at
+1.33 GHz - which is the difference between smooth 720p and a slideshow, and it
+pins the CPU at 100% on a fanless chassis while it fails.
+
+The image installs `i965-va-driver`. That is the intel-vaapi-driver, which covers
+Gen7 and earlier. `intel-media-va-driver` is for Gen8 (Broadwell) onwards and
+does nothing here.
+
+Check it is working:
+
+```bash
+vainfo 2>&1 | head -20     # should list VAProfileH264* entries
+```
+
+Applications need to be told to use it. GStreamer-based players generally pick it
+up; Chromium-based browsers need flags, and Firefox needs
+`media.ffmpeg.vaapi.enabled` set in `about:config`.
+
+### Chromium and Brave on 2 GB
+
+Chromium's process-per-site model is more memory-hungry than Firefox's, which
+matters here. Brave's built-in content blocking pulls in the other direction and
+is a real win on a slow CPU - most of the cost of a modern page is JavaScript
+execution and layout, not bandwidth.
+
+Put flags in a desktop file override rather than editing the packaged one, so an
+update does not revert them:
+
+```bash
+mkdir -p ~/.local/share/applications
+sed -e 's|^Exec=/usr/bin/brave-browser-stable |Exec=/usr/bin/brave-browser-stable --renderer-process-limit=3 --process-per-site --enable-features=VaapiVideoDecodeLinuxGL,VaapiVideoDecoder --ignore-gpu-blocklist --ozone-platform-hint=auto |' \
+    /usr/share/applications/brave-browser.desktop > ~/.local/share/applications/brave-browser.desktop
+update-desktop-database ~/.local/share/applications
+```
+
+- `--renderer-process-limit=3` is the biggest single saving. The default scales
+  with RAM and still overshoots on 2 GB.
+- `--process-per-site` consolidates tabs of the same site into one process.
+- The VA-API flags vary by Chromium version and are worth verifying rather than
+  trusting: open `brave://gpu` and look for *Video Decode: Hardware accelerated*.
+  If it says software, try dropping `VaapiVideoDecodeLinuxGL` and keeping only
+  `VaapiVideoDecoder`, or vice versa.
+
+Also turn off the Brave features that run background services - Rewards, Wallet,
+News and Sync - unless you use them. Each is a process on a machine with room for
+few.
+
 ## Things deliberately not done
 
 - **`f2fs` root.** Genuinely better suited to eMMC than ext4, but GRUB's f2fs
