@@ -29,7 +29,7 @@ trap 'umount_pseudo' EXIT INT TERM
 
 mkdir -p "$WORKDIR" "$OUTDIR"
 
-ALL_STAGES=(00-deps 10-bootstrap 20-packages 30-overlay 40-tuning 50-cleanup 60-squashfs 70-efi 80-iso)
+ALL_STAGES=(00-deps 10-bootstrap 20-packages 30-overlay 40-tuning 50-cleanup 60-squashfs 70-efi 80-iso 85-usbimg)
 
 # Select stages: either the ones named on the command line (by number prefix)
 # or all of them.
