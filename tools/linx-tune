@@ -80,6 +80,8 @@ linx-tune - Linx 1010B tuning switches
  Services
   printing-on         Enable CUPS + Avahi discovery
   printing-off        Disable them again                 [default]
+  appstore-on         Install GNOME App Center + Flatpak [costs ~150 MB while open]
+  appstore-off        Remove it again                    [default: not installed]
 USAGE
 }
 
@@ -268,6 +270,36 @@ logs-persistent)
     sed -i 's/^Storage=.*/Storage=persistent/' /etc/systemd/journald.conf.d/10-linx.conf
     systemctl restart systemd-journald; say "journal now on disk (journalctl -b -1 will work)"
     note "This writes continuously to the eMMC. Switch back when you are done."
+    ;;
+
+appstore-on)
+    need_root "$@"
+    # This image ships without a graphical app store, and masks packagekit,
+    # because both are resident cost on a 2 GB machine for something most people
+    # use a handful of times. Putting it back is a supported choice, not a hack -
+    # but packagekit must be unmasked or the App Center opens to an empty,
+    # apparently broken window.
+    apt-get update
+    apt-get install -y --no-install-recommends         gnome-software gnome-software-plugin-flatpak flatpak packagekit
+    systemctl unmask packagekit.service packagekit-offline-update.service 2>/dev/null || true
+    systemctl daemon-reload
+    # Flathub, so there is actually something to browse beyond the Debian archive.
+    flatpak remote-add --if-not-exists flathub         https://flathub.org/repo/flathub.flatpakrepo 2>/dev/null || true
+    # Keep background metadata refresh off. That periodic download and CPU spike
+    # is the part worth avoiding here; PackageKit itself is D-Bus activated and
+    # exits when idle.
+    gsettings set org.gnome.software download-updates false 2>/dev/null || true
+    gsettings set org.gnome.software download-updates-on-battery false 2>/dev/null || true
+    say "App Center installed; log out and back in for it to appear"
+    note "It checks for updates only when you open it - background refresh stays off."
+    note "Flatpak apps bring their own runtimes; the first one may pull 1-2 GB."
+    ;;
+appstore-off)
+    need_root "$@"
+    apt-get purge -y gnome-software gnome-software-plugin-flatpak 2>/dev/null || true
+    apt-get autoremove --purge -y
+    systemctl mask packagekit.service packagekit-offline-update.service 2>/dev/null || true
+    say "App Center removed and packagekit masked again"
     ;;
 
 printing-on)
