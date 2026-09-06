@@ -251,69 +251,50 @@ animations-off) gsettings set org.gnome.desktop.interface enable-animations fals
 animations-on)  gsettings set org.gnome.desktop.interface enable-animations true;  say "animations on"
                 note "Expect visible stutter on transitions - this GPU is Gen7." ;;
 
-greeter-lite)
+greeter-lite|greeter-gdm)
     need_root "$@"
-    apt-get install -y --no-install-recommends lightdm lightdm-gtk-greeter
-    systemctl disable gdm3 >/dev/null 2>&1 || true
-    echo "/usr/sbin/lightdm" > /etc/X11/default-display-manager
-    systemctl enable lightdm
-    say "switched to LightDM; reboot"
-    note "Frees roughly 120 MB versus GDM. You lose GDM's on-screen keyboard at"
-    note "the login prompt, which matters if you use the tablet without the dock."
-    ;;
-greeter-gdm)
-    need_root "$@"
-    # greeter-lite only disables gdm3, so it is normally still installed.
-    if ! dpkg -s gdm3 >/dev/null 2>&1; then
-        warn "gdm3 is not installed; fetching it"
-        apt-get install -y --no-install-recommends gdm3
-    fi
-    systemctl disable lightdm >/dev/null 2>&1 || true
-    echo "/usr/sbin/gdm3" > /etc/X11/default-display-manager
-    systemctl enable gdm3
-    # Debian selects the greeter through BOTH the systemd alias and
-    # /etc/X11/default-display-manager, and they can disagree. The
-    # display-manager.service symlink is what actually starts at boot, so check
-    # it rather than assuming the enable did what was intended.
-    dm=$(basename "$(readlink -f /etc/systemd/system/display-manager.service 2>/dev/null || echo none)")
-    if [ "$dm" = "gdm3.service" ]; then
-        say "switched to GDM - reboot to see it"
-    else
-        warn "display-manager.service still points at '$dm'."
-        warn "Fix it interactively with:  sudo dpkg-reconfigure gdm3"
-    fi
-    note "GDM costs roughly 120 MB more than LightDM, but gives you the GNOME"
-    note "login screen and its on-screen keyboard, which matters undocked."
-    ;;
-
-initramfs-slim)
-    need_root "$@"
-    # Debian builds a generic initramfs (MODULES=most) containing drivers for
-    # essentially every storage and input controller. That is correct for install
-    # media, which must boot unknown hardware - but on an INSTALLED system it is
-    # ~55 MB that the bootloader reads off a slow eMMC at every single boot.
+    # Debian does NOT select the display manager with systemctl enable.
     #
-    # MODULES=dep includes only what this machine actually needs. It is safe here
-    # precisely because it runs ON the tablet, so it probes the real hardware.
-    # The risk is that a future hardware change (a different USB controller for
-    # the root device) leaves it unbootable, so keep the working one as a fallback.
-    kver=$(uname -r)
-    if [ -f "/boot/initrd.img-$kver" ] && [ ! -f "/boot/initrd.img-$kver.full" ]; then
-        cp -a "/boot/initrd.img-$kver" "/boot/initrd.img-$kver.full"
-        say "backed up the generic initramfs to /boot/initrd.img-$kver.full"
+    # gdm3.service has no [Install] section at all, so "systemctl enable gdm3"
+    # succeeds and does absolutely nothing. What actually decides which greeter
+    # runs is the /etc/systemd/system/display-manager.service symlink, which the
+    # package postinst and dpkg-reconfigure maintain.
+    #
+    # An earlier version of this script disabled the outgoing greeter (removing
+    # that symlink) and then "enabled" the incoming one, which was a no-op. The
+    # result was a machine with no display manager that booted to a text
+    # console. Manipulate the symlink directly instead, and verify it.
+    if [ "$1" = greeter-lite ]; then
+        want=lightdm
+        dpkg -s lightdm >/dev/null 2>&1 || \
+            apt-get install -y --no-install-recommends lightdm lightdm-gtk-greeter
+    else
+        want=gdm3
+        dpkg -s gdm3 >/dev/null 2>&1 || \
+            apt-get install -y --no-install-recommends gdm3
     fi
-    sed -i 's/^MODULES=.*/MODULES=dep/' /etc/initramfs-tools/initramfs.conf
-    grep -q '^MODULES=' /etc/initramfs-tools/initramfs.conf || echo 'MODULES=dep' >> /etc/initramfs-tools/initramfs.conf
-    update-initramfs -u -k all
-    say "initramfs rebuilt: $(du -h "/boot/initrd.img-$kver" | cut -f1) (was $(du -h "/boot/initrd.img-$kver.full" | cut -f1))"
-    note "If the machine fails to boot after this, use the GRUB command line to"
-    note "load /boot/initrd.img-$kver.full, then run: linx-tune initramfs-full"
-    ;;
-initramfs-full)
-    need_root "$@"
-    sed -i 's/^MODULES=.*/MODULES=most/' /etc/initramfs-tools/initramfs.conf
-    update-initramfs -u -k all
-    say "generic initramfs restored"
+
+    unit=$(find /usr/lib/systemd/system /lib/systemd/system -maxdepth 1 \
+           -name "$want.service" 2>/dev/null | head -1)
+    [ -n "$unit" ] || { echo "Cannot find $want.service - is it installed?" >&2; exit 1; }
+
+    echo "/usr/sbin/$want" > /etc/X11/default-display-manager
+    ln -sf "$unit" /etc/systemd/system/display-manager.service
+    systemctl daemon-reload
+
+    dm=$(basename "$(readlink -f /etc/systemd/system/display-manager.service)")
+    if [ "$dm" = "$want.service" ]; then
+        say "display manager is now $want"
+        note "Switch takes effect on reboot. To change now without rebooting:"
+        note "  sudo systemctl stop display-manager && sudo systemctl start $want"
+    else
+        die "Switch failed: display-manager.service points at '$dm'.
+Recover with:  sudo dpkg-reconfigure $want"
+    fi
+    if [ "$want" = lightdm ]; then
+        note "Frees roughly 120 MB versus GDM, but loses the on-screen keyboard"
+        note "at the login prompt, which matters if you use the tablet undocked."
+    fi
     ;;
 
 logs-volatile)
