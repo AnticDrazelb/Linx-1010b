@@ -263,10 +263,27 @@ greeter-lite)
     ;;
 greeter-gdm)
     need_root "$@"
+    # greeter-lite only disables gdm3, so it is normally still installed.
+    if ! dpkg -s gdm3 >/dev/null 2>&1; then
+        warn "gdm3 is not installed; fetching it"
+        apt-get install -y --no-install-recommends gdm3
+    fi
     systemctl disable lightdm >/dev/null 2>&1 || true
     echo "/usr/sbin/gdm3" > /etc/X11/default-display-manager
     systemctl enable gdm3
-    say "switched to GDM; reboot"
+    # Debian selects the greeter through BOTH the systemd alias and
+    # /etc/X11/default-display-manager, and they can disagree. The
+    # display-manager.service symlink is what actually starts at boot, so check
+    # it rather than assuming the enable did what was intended.
+    dm=$(basename "$(readlink -f /etc/systemd/system/display-manager.service 2>/dev/null || echo none)")
+    if [ "$dm" = "gdm3.service" ]; then
+        say "switched to GDM - reboot to see it"
+    else
+        warn "display-manager.service still points at '$dm'."
+        warn "Fix it interactively with:  sudo dpkg-reconfigure gdm3"
+    fi
+    note "GDM costs roughly 120 MB more than LightDM, but gives you the GNOME"
+    note "login screen and its on-screen keyboard, which matters undocked."
     ;;
 
 initramfs-slim)
