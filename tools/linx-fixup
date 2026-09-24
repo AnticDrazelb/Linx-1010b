@@ -90,6 +90,70 @@ for f in /sys/bus/usb/devices/*/power/control; do
 done
 [ "$restored" -gt 0 ] && ok "woke $restored USB device(s) - try the touchpad now"
 
+# --- 4. A missing or dangling display-manager.service ----------------------
+# Debian selects the greeter through /etc/systemd/system/display-manager.service,
+# NOT through systemctl enable - gdm3.service has no [Install] section at all, so
+# enabling it succeeds and does nothing. An earlier version of linx-tune's
+# greeter switching relied on enable/disable and could leave this symlink absent,
+# which boots the machine to a text console with no graphical session.
+log "Checking the display manager is actually selected"
+DM_LINK=/etc/systemd/system/display-manager.service
+if [ -L "$DM_LINK" ] && [ -e "$DM_LINK" ]; then
+    skip "display manager: $(basename "$(readlink -f "$DM_LINK")")"
+else
+    # Prefer whatever /etc/X11/default-display-manager names, then gdm3, then
+    # lightdm - repairing it, rather than imposing a choice.
+    want=""
+    if [ -r /etc/X11/default-display-manager ]; then
+        want=$(basename "$(cat /etc/X11/default-display-manager)")
+    fi
+    [ -n "$want" ] && ! dpkg -s "$want" >/dev/null 2>&1 && want=""
+    [ -z "$want" ] && dpkg -s gdm3    >/dev/null 2>&1 && want=gdm3
+    [ -z "$want" ] && dpkg -s lightdm >/dev/null 2>&1 && want=lightdm
+
+    if [ -z "$want" ]; then
+        warn "No display manager is installed; leaving this alone."
+    else
+        unit=$(find /usr/lib/systemd/system /lib/systemd/system -maxdepth 1 \
+               -name "$want.service" 2>/dev/null | head -1)
+        if [ -n "$unit" ]; then
+            ln -sf "$unit" "$DM_LINK"
+            echo "/usr/sbin/$want" > /etc/X11/default-display-manager
+            systemctl daemon-reload
+            ok "repaired: display manager set to $want"; changed=1
+        else
+            warn "Could not find $want.service to link to."
+        fi
+    fi
+fi
+
+# --- 5. Hardware video decode ----------------------------------------------
+# The GPU decodes H.264 in fixed-function hardware; without a VA-API driver that
+# work lands on four in-order 1.33 GHz cores instead. i965-va-driver is the one
+# for Gen7 - intel-media-va-driver targets Gen8 onwards and does nothing here.
+log "Checking hardware video decode"
+if dpkg -s i965-va-driver >/dev/null 2>&1; then
+    skip "i965-va-driver"
+else
+    apt-get install -y --no-install-recommends i965-va-driver vainfo \
+        && { ok "installed i965-va-driver"; changed=1; } \
+        || warn "could not install i965-va-driver (no network?)"
+fi
+
+# --- 6. Wi-Fi regulatory domain --------------------------------------------
+# In the world domain (00) channels 12 and 13 are receive-only, so an access
+# point on either is visible in a scan and cannot be joined.
+log "Checking the Wi-Fi regulatory domain"
+WIFI_CONF=/etc/modprobe.d/linx-wifi.conf
+if grep -qs 'ieee80211_regdom' "$WIFI_CONF"; then
+    skip "regulatory domain already pinned"
+else
+    printf '\noptions cfg80211 ieee80211_regdom=%s\n' "${LINX_REGDOM:-GB}" >> "$WIFI_CONF"
+    iw reg set "${LINX_REGDOM:-GB}" 2>/dev/null || true
+    ok "regulatory domain set to ${LINX_REGDOM:-GB} (override with LINX_REGDOM=xx)"
+    changed=1
+fi
+
 printf '\n'
 if [ "$changed" = 1 ]; then
     ok "Fixes applied. Log out and back in (or reboot) for all of them to take effect."

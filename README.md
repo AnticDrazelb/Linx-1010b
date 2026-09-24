@@ -112,6 +112,8 @@ Sources and per-device detail: [docs/hardware.md](docs/hardware.md).
 | `linx-gpe-scan` | **Finds an ACPI GPE interrupt storm** — a firmware bug that pins a kworker thread near 100% CPU forever. The GPE number varies per unit so it cannot be shipped as a default. `--apply` writes the fix. |
 | `linx-tune` | Flips the documented trade-offs: C-states, Wi-Fi power saving, CPU governor, GDM vs LightDM, persistent logs, printing |
 | `linx-install` | Installs the live system to the eMMC |
+| `linx-fixup` | Applies fixes found after an image was built, to an already-installed system — so a correction does not mean re-transferring 700 MB. Idempotent; reports what it changed |
+| `linx-boot-from-emmc` | Makes an SD-card install bootable on firmware that cannot boot from the SD slot, by putting GRUB and the kernel on the eMMC's existing EFI partition. Leaves Windows in place |
 
 Plus one build-host tool, `tools/test-boot-qemu.sh`, which boots a built ISO under
 32-bit UEFI (`ovmf-ia32`) in QEMU. This reproduces the tablet's IA32-firmware
